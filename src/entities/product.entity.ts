@@ -1,0 +1,59 @@
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  ManyToOne,
+  OneToMany,
+  JoinColumn,
+} from 'typeorm';
+
+@Entity('products')
+export class Product {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column()
+  name: string;
+
+  @Column({ type: 'text', nullable: true })
+  description: string;
+
+  @Column({ type: 'decimal', precision: 10, scale: 2 })
+  price: number;
+
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  costPrice: number;
+
+  @Column({ type: 'int', default: 0 })
+  stock: number;
+
+  @Column({ nullable: true })
+  sku: string;
+
+  @Column({ nullable: true })
+  barcode: string;
+
+  @Column({ nullable: true })
+  image: string;
+
+  @Column({ default: true })
+  isActive: boolean;
+
+  @ManyToOne('Category', 'products')
+  @JoinColumn({ name: 'categoryId' })
+  category: any;
+
+  @Column('uuid', { nullable: true })
+  categoryId: string;
+
+  @CreateDateColumn()
+  createdAt: Date;
+
+  @UpdateDateColumn()
+  updatedAt: Date;
+
+  @OneToMany('OrderItem', 'product')
+  orderItems: any[];
+}
