@@ -8,7 +8,7 @@ async function bootstrap() {
 
   const allowedOrigins = [
     'http://localhost:8080',
-    'https://api.tapntrade.store'
+    'https://tapntrade.store'
   ];
 
   app.enableCors({
