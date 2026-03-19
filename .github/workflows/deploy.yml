@@ -20,8 +20,8 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            cd /home/ubuntu/my-app
+            cd /home/ubuntu/POS-Backend
             git pull origin main
             npm install
             npm run build
-            pm2 restart my-nest-app || pm2 start dist/main.js --name my-nest-app
+            pm2 restart POS-Backend || pm2 start dist/main.js --name my-nest-app
