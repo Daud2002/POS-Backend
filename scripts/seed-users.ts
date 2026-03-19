@@ -58,7 +58,7 @@ async function seedUsers() {
     password: process.env.DATABASE_PASSWORD || 'postgres',
     database: process.env.DATABASE_NAME || 'POS',
     entities: [path.join(__dirname, '../src/entities/**/*.entity{.ts,.js}')],
-    synchronize: true,
+    synchronize: false,
     logging: false,
   });
 
