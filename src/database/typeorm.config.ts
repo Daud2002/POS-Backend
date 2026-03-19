@@ -13,4 +13,7 @@ export const typeormConfig = (): TypeOrmModuleOptions => ({
   logging: process.env.NODE_ENV === 'development',
   dropSchema: process.env.DROP_SCHEMA === 'true', // Set to true to drop and recreate schema
   migrationsRun: false,
+  ssl: {
+  rejectUnauthorized: false,
+  }
 });
