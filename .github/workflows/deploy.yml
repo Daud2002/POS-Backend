@@ -24,4 +24,4 @@ jobs:
             git pull origin main
             npm install
             npm run build
-            pm2 restart POS-Backend || pm2 start dist/main.js --name my-nest-app
+            pm2 restart POS-Backend || pm2 start dist/main.js
