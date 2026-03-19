@@ -51,8 +51,7 @@ Content-Type: application/json
 {
   "email": "user@example.com",
   "password": "secure_password",
-  "firstName": "John",
-  "lastName": "Doe"
+  "name": "John Doe"
 }
 ```
 
@@ -64,8 +63,7 @@ Content-Type: application/json
   "user": {
     "id": "uuid",
     "email": "user@example.com",
-    "firstName": "John",
-    "lastName": "Doe",
+    "name": "John Doe",
     "role": "employee",
     "isActive": true,
     "createdAt": "2026-03-09T15:30:00Z"
@@ -93,8 +91,7 @@ Content-Type: application/json
   "user": {
     "id": "uuid",
     "email": "user@example.com",
-    "firstName": "John",
-    "lastName": "Doe",
+    "name": "John Doe",
     "role": "employee",
     "isActive": true
   }
@@ -104,7 +101,7 @@ Content-Type: application/json
 #### Get Profile (Protected)
 
 ```http
-POST /auth/me
+GET /auth/me
 Authorization: Bearer <token>
 ```
 

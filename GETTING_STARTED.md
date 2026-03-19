@@ -77,8 +77,7 @@ curl -X POST http://localhost:3000/api/auth/register \
   -d '{
     "email": "admin@example.com",
     "password": "password123",
-    "firstName": "Admin",
-    "lastName": "User"
+    "name": "Admin User"
   }'
 ```
 
@@ -98,7 +97,7 @@ You'll get a response with an `accessToken`. Copy this token for authenticated r
 #### Get Profile (Requires Authentication)
 
 ```bash
-curl -X POST http://localhost:3000/api/auth/me \
+curl -X GET http://localhost:3000/api/auth/me \
   -H "Authorization: Bearer <your_token>"
 ```
 
@@ -107,7 +106,7 @@ curl -X POST http://localhost:3000/api/auth/me \
 #### Authentication
 - `POST /api/auth/register` - Register new user
 - `POST /api/auth/login` - Login user
-- `POST /api/auth/me` - Get current user profile (Protected)
+- `GET /api/auth/me` - Get current user profile (Protected)
 
 #### Categories
 - `GET /api/categories` - Get all categories

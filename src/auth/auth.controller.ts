@@ -1,6 +1,7 @@
 import {
   Controller,
   Post,
+  Get,
   Body,
   UseGuards,
   Request,
@@ -25,8 +26,7 @@ export class AuthController {
       user: {
         id: 'uuid',
         email: 'user@example.com',
-        firstName: 'John',
-        lastName: 'Doe',
+        name: 'John Doe',
         role: 'employee',
         isActive: true
       }
@@ -53,8 +53,7 @@ export class AuthController {
       const user = await this.authService.register(
         registerDto.email,
         registerDto.password,
-        registerDto.firstName,
-        registerDto.lastName,
+        registerDto.name,
       );
       return { message: 'User registered successfully', user };
     } catch (error) {
@@ -63,7 +62,7 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
-  @Post('me')
+  @Get('me')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current user profile' })
   @ApiResponse({ status: 200, description: 'User profile' })

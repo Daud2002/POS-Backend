@@ -18,11 +18,8 @@ export class User {
   @Column()
   passwordHash: string;
 
-  @Column()
-  firstName: string;
-
-  @Column()
-  lastName: string;
+  @Column({ nullable: true })
+  name: string;
 
   @Column({ nullable: true })
   phone: string;
