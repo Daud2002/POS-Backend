@@ -4,6 +4,7 @@ import { ConfigModule } from '@nestjs/config';
 import { typeormConfig } from './database/typeorm.config';
 import { User, Category, Product, Customer, Order, OrderItem, Store } from './entities';
 import { AuthModule } from './auth/auth.module';
+import { AppController } from './app.controller';
 import { ProductsModule } from './modules/products/products.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { CustomersModule } from './modules/customers/customers.module';
@@ -27,7 +28,7 @@ import { UsersModule } from './modules/users/users.module';
     StoresModule,
     UsersModule,
   ],
-  controllers: [],
+  controllers: [AppController],
   providers: [],
 })
 export class AppModule {}
