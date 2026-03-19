@@ -6,9 +6,22 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // Enable CORS
+  const allowedOrigins = [
+    'http://localhost:8080',
+    'https://api.tapntrade.store'
+  ];
+
   app.enableCors({
-    origin: process.env.CORS_ORIGIN || 'http://localhost:8080',
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps or Postman)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true); // allow this origin
+      } else {
+        callback(new Error('Not allowed by CORS')); // block
+      }
+    },
     credentials: true,
   });
 
