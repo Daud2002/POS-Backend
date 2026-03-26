@@ -1,10 +1,19 @@
-import { IsString, IsOptional, IsIn } from 'class-validator';
+import { IsString, IsOptional, IsIn, IsEmail, MinLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateStoreDto {
   @ApiProperty({ example: 'My Store' })
   @IsString()
   name: string;
+
+  @ApiProperty({ example: 'store@example.com', description: 'Store owner email for login' })
+  @IsEmail()
+  email: string;
+
+  @ApiProperty({ example: 'password123', description: 'Store owner password' })
+  @IsString()
+  @MinLength(6)
+  password: string;
 
   @ApiProperty({ example: 'Restaurant', required: false })
   @IsOptional()
@@ -30,16 +39,6 @@ export class CreateStoreDto {
   @IsOptional()
   @IsString()
   phone?: string;
-
-  @ApiProperty({ example: 'store@example.com', required: false })
-  @IsOptional()
-  @IsString()
-  email?: string;
-
-  @ApiProperty({ example: 'active', required: false })
-  @IsOptional()
-  @IsIn(['active', 'inactive'])
-  status?: string;
 }
 
 export class UpdateStoreDto {
@@ -77,9 +76,4 @@ export class UpdateStoreDto {
   @IsOptional()
   @IsString()
   email?: string;
-
-  @ApiProperty({ required: false })
-  @IsOptional()
-  @IsIn(['active', 'inactive'])
-  status?: string;
 }

@@ -5,6 +5,7 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   OneToMany,
+  OneToOne,
 } from 'typeorm';
 
 @Entity('users')
@@ -25,7 +26,7 @@ export class User {
   phone: string;
 
   @Column({ default: 'user' })
-  role: 'admin' | 'cashier' | 'manager' | 'employee' | 'customer';
+  role: 'admin' | 'cashier' | 'store_owner' | 'employee' | 'customer';
 
   @Column({ default: true })
   isActive: boolean;
@@ -38,4 +39,7 @@ export class User {
 
   @OneToMany('Order', 'createdBy')
   orders: any[];
+
+  @OneToOne('Store', 'owner', { nullable: true })
+  store?: any;
 }

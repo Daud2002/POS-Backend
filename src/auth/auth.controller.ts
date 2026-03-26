@@ -10,7 +10,7 @@ import {
 import { Request as ExpressRequest } from 'express';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
-import { LoginDto, RegisterDto } from './dto';
+import { LoginDto, RegisterDto, UserResponseDto } from './dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
 @ApiTags('Auth')
@@ -28,7 +28,9 @@ export class AuthController {
         email: 'user@example.com',
         name: 'John Doe',
         role: 'employee',
-        isActive: true
+        isActive: true,
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
       }
     }
   }})
@@ -40,6 +42,9 @@ export class AuthController {
     );
     if (!user) {
       throw new BadRequestException('Invalid credentials');
+    }
+    if (!user.isActive) {
+      throw new BadRequestException('Your account is inactive.');
     }
     return this.authService.login(user);
   }
@@ -65,7 +70,7 @@ export class AuthController {
   @Get('me')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current user profile' })
-  @ApiResponse({ status: 200, description: 'User profile' })
+  @ApiResponse({ status: 200, description: 'User profile', type: UserResponseDto })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   getProfile(@Request() req: ExpressRequest) {
     return req.user;

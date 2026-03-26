@@ -6,3 +6,4 @@ export { Customer } from './customer.entity';
 export { Order } from './order.entity';
 export { OrderItem } from './order-item.entity';
 export { Store } from './store.entity';
+export { Employee } from './employee.entity';

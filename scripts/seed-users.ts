@@ -8,10 +8,10 @@ import { User } from '../src/entities';
 // Load environment variables
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
-const ROLES: Array<'admin' | 'cashier' | 'manager' | 'employee' | 'customer'> = [
+const ROLES: Array<'admin' | 'cashier' | 'store_owner' | 'employee' | 'customer'> = [
   'admin',
   'cashier',
-  'manager',
+  'store_owner',
   'employee',
   'customer',
 ];
@@ -24,10 +24,10 @@ const usersToSeed = [
     role: 'admin' as const,
   },
   {
-    email: 'manager@poscloud.com',
-    password: 'manager123',
-    name: 'Manager User',
-    role: 'manager' as const,
+    email: 'storeowner@poscloud.com',
+    password: 'storeowner123',
+    name: 'Store Owner User',
+    role: 'store_owner' as const,
   },
   {
     email: 'cashier@poscloud.com',

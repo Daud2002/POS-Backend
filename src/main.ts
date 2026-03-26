@@ -8,6 +8,7 @@ async function bootstrap() {
 
   const allowedOrigins = [
     'http://localhost:8080',
+    'http://localhost:3000',
     'https://tapntrade.store'
   ];
 

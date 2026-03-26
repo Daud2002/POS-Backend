@@ -1,9 +1,12 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, OneToOne, JoinColumn } from 'typeorm';
 
 @Entity('stores')
 export class Store {
   @PrimaryGeneratedColumn('uuid')
   id: string;
+
+  @Column({ type: 'uuid', nullable: true })
+  userId: string;
 
   @Column({ type: 'varchar', length: 255 })
   name: string;
@@ -30,16 +33,13 @@ export class Store {
   @Column({ type: 'varchar', length: 255, nullable: true })
   email?: string;
 
-  @Column({
-    type: 'enum',
-    enum: ['active', 'inactive'],
-    default: 'active',
-  })
-  status: string;
-
   @CreateDateColumn()
   createdAt: Date;
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  @OneToOne('User', { nullable: false })
+  @JoinColumn({ name: 'userId' })
+  owner: any;
 }

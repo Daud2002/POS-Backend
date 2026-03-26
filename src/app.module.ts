@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
 import { typeormConfig } from './database/typeorm.config';
-import { User, Category, Product, Customer, Order, OrderItem, Store } from './entities';
+import { User, Category, Product, Customer, Order, OrderItem, Store, Employee } from './entities';
 import { AuthModule } from './auth/auth.module';
 import { AppController } from './app.controller';
 import { ProductsModule } from './modules/products/products.module';
@@ -11,6 +11,7 @@ import { CustomersModule } from './modules/customers/customers.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { StoresModule } from './modules/stores/stores.module';
 import { UsersModule } from './modules/users/users.module';
+import { EmployeesModule } from './modules/employees/employees.module';
 
 @Module({
   imports: [
@@ -19,7 +20,7 @@ import { UsersModule } from './modules/users/users.module';
       envFilePath: '.env',
     }),
     TypeOrmModule.forRoot(typeormConfig()),
-    TypeOrmModule.forFeature([User, Category, Product, Customer, Order, OrderItem, Store]),
+    TypeOrmModule.forFeature([User, Category, Product, Customer, Order, OrderItem, Store, Employee]),
     AuthModule,
     ProductsModule,
     CategoriesModule,
@@ -27,6 +28,7 @@ import { UsersModule } from './modules/users/users.module';
     OrdersModule,
     StoresModule,
     UsersModule,
+    EmployeesModule,
   ],
   controllers: [AppController],
   providers: [],

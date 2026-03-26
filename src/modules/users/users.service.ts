@@ -38,7 +38,7 @@ export class UsersService {
     if (password) {
       updateData.passwordHash = password;
     }
-    await this.usersRepository.update(id, updateData);
+    const changed = await this.usersRepository.update(id, updateData);
     return this.findOne(id);
   }
 
