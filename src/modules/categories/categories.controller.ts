@@ -8,33 +8,61 @@ import {
   Delete,
   UseGuards,
   Query,
+  Req,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { CategoriesService } from './categories.service';
 import { CreateCategoryDto, UpdateCategoryDto } from './dto/category.dto';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Store, Employee, User } from '../../entities';
+import { Request } from 'express';
 
 @ApiTags('Categories')
 @Controller('categories')
 export class CategoriesController {
-  constructor(private readonly categoriesService: CategoriesService) {}
+  constructor(
+    private readonly categoriesService: CategoriesService,
+    @InjectRepository(Store)
+    private storesRepository: Repository<Store>,
+    @InjectRepository(Employee)
+    private employeesRepository: Repository<Employee>,
+  ) {}
+
+  private async getStoreIdFromUser(user: any): Promise<string> {
+    if (user.role === 'store_owner') {
+      const store = await this.storesRepository.findOne({ where: { userId: user.id } });
+      if (!store) throw new BadRequestException('Store not found for this user');
+      return store.id;
+    } else if (user.role === 'employee' || user.role === 'cashier') {
+      const employee = await this.employeesRepository.findOne({ where: { userId: user.id } });
+      if (!employee) throw new BadRequestException('Employee record not found');
+      return employee.storeId;
+    }
+    throw new BadRequestException('Invalid user role for this operation');
+  }
 
   @UseGuards(JwtAuthGuard)
   @Post()
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create a new category' })
   @ApiResponse({ status: 201, description: 'Category created' })
-  create(@Body() createCategoryDto: CreateCategoryDto) {
-    return this.categoriesService.create(createCategoryDto);
+  async create(@Req() req: Request, @Body() createCategoryDto: CreateCategoryDto) {
+    const storeId = await this.getStoreIdFromUser(req.user);
+    return this.categoriesService.create(createCategoryDto, storeId);
   }
 
   @Get()
-  @ApiOperation({ summary: 'Get all categories' })
+  @ApiOperation({ summary: 'Get all categories for store' })
   @ApiQuery({ name: 'skip', required: false, type: Number })
   @ApiQuery({ name: 'take', required: false, type: Number })
+  @ApiQuery({ name: 'storeId', required: true, type: String })
   @ApiResponse({ status: 200, description: 'List of categories' })
-  findAll(@Query('skip') skip?: number, @Query('take') take?: number) {
-    return this.categoriesService.findAll(skip, take);
+  findAll(@Query('storeId') storeId?: string, @Query('skip') skip?: number, @Query('take') take?: number) {
+    if (!storeId) throw new BadRequestException('storeId query parameter is required');
+    return this.categoriesService.findAll(storeId, skip, take);
   }
 
   @Get(':id')
@@ -48,18 +76,21 @@ export class CategoriesController {
   @Patch(':id')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update a category' })
-  update(
+  async update(
+    @Req() req: Request,
     @Param('id') id: string,
     @Body() updateCategoryDto: UpdateCategoryDto,
   ) {
-    return this.categoriesService.update(id, updateCategoryDto);
+    const storeId = await this.getStoreIdFromUser(req.user);
+    return this.categoriesService.update(id, updateCategoryDto, storeId);
   }
 
   @UseGuards(JwtAuthGuard)
   @Delete(':id')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Delete a category' })
-  remove(@Param('id') id: string) {
-    return this.categoriesService.remove(id);
+  async remove(@Req() req: Request, @Param('id') id: string) {
+    const storeId = await this.getStoreIdFromUser(req.user);
+    return this.categoriesService.remove(id, storeId);
   }
 }

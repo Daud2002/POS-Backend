@@ -14,6 +14,9 @@ export class Order {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  @Column('uuid', { nullable: true })
+  storeId: string;
+
   @Column({ unique: true })
   orderNumber: string;
 

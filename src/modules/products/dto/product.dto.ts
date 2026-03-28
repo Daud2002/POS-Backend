@@ -22,7 +22,11 @@ export class CreateProductDto {
   @IsOptional()
   @IsNumber()
   costPrice: number;
-
+  @ApiProperty({ example: 5, description: 'Low stock alert quantity', required: false })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  lowStockAlertQuantity: number;
   @ApiProperty({ example: 50, description: 'Stock quantity', required: false })
   @IsOptional()
   @IsNumber()

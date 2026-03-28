@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Product } from '../../entities';
@@ -11,26 +11,33 @@ export class ProductsService {
     private productsRepository: Repository<Product>,
   ) {}
 
-  async create(createProductDto: CreateProductDto): Promise<Product> {
-    const product = this.productsRepository.create(createProductDto);
+  async create(createProductDto: CreateProductDto, storeId: string): Promise<Product> {
+    const product = this.productsRepository.create({ ...createProductDto, storeId });
     return await this.productsRepository.save(product);
   }
 
-  async findAll(skip?: number, take?: number): Promise<Product[]> {
+  async findAll(storeId: string, skip?: number, take?: number): Promise<Product[]> {
     return await this.productsRepository.find({
+      where: { storeId },
       relations: ['category'],
       skip,
       take,
     });
   }
 
-  async findOne(id: string): Promise<Product> {
+  async findOne(id: string, storeId?: string): Promise<Product> {
+    const where: any = { id };
+    if (storeId) where.storeId = storeId;
+    
     const product = await this.productsRepository.findOne({
-      where: { id },
+      where,
       relations: ['category'],
     });
     if (!product) {
       throw new NotFoundException(`Product #${id} not found`);
+    }
+    if (storeId && product.storeId !== storeId) {
+      throw new ForbiddenException('You do not have access to this product');
     }
     return product;
   }
@@ -38,21 +45,33 @@ export class ProductsService {
   async update(
     id: string,
     updateProductDto: UpdateProductDto,
+    storeId: string,
   ): Promise<Product> {
-    const product = await this.findOne(id);
+    const product = await this.findOne(id, storeId);
     const updated = this.productsRepository.merge(product, updateProductDto);
     return await this.productsRepository.save(updated);
   }
 
-  async remove(id: string): Promise<void> {
-    const product = await this.findOne(id);
+  async remove(id: string, storeId: string): Promise<void> {
+    const product = await this.findOne(id, storeId);
     await this.productsRepository.remove(product);
   }
 
-  async findByCategory(categoryId: string): Promise<Product[]> {
+  async findByCategory(categoryId: string, storeId: string): Promise<Product[]> {
     return await this.productsRepository.find({
-      where: { categoryId },
+      where: { categoryId, storeId },
       relations: ['category'],
     });
+  }
+
+  async deductStock(id: string, quantity: number, storeId: string): Promise<Product> {
+    const product = await this.findOne(id, storeId);
+    
+    if (product.stock < quantity) {
+      throw new BadRequestException(`Insufficient stock for product "${product.name}". Available: ${product.stock}, Requested: ${quantity}`);
+    }
+    
+    product.stock -= quantity;
+    return await this.productsRepository.save(product);
   }
 }

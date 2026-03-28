@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Store } from '@/entities';
 import { User } from '@/entities';
+import { Employee } from '@/entities';
 import { CreateStoreDto, UpdateStoreDto } from './dto';
 import * as bcrypt from 'bcrypt';
 
@@ -13,6 +14,8 @@ export class StoresService {
     private storesRepository: Repository<Store>,
     @InjectRepository(User)
     private usersRepository: Repository<User>,
+    @InjectRepository(Employee)
+    private employeesRepository: Repository<Employee>,
   ) {}
 
   async findAll(skip = 0, take = 10) {
@@ -79,12 +82,25 @@ export class StoresService {
       throw new BadRequestException(`Store with ID ${id} not found`);
     }
 
-    // Delete the associated user
+    const employees = await this.employeesRepository.find({
+      where: { storeId: id },
+    });
+    console.log(`Deleting ${employees.length} employees associated with store ID ${id}`);
+
+    for (const employee of employees) {
+      if (employee.userId) {
+        await this.employeesRepository.delete(employee.id);
+        await this.usersRepository.delete(employee.userId);
+      }
+    }
+
+    await this.employeesRepository.delete({ storeId: id });
+    const result = await this.storesRepository.delete(id);
+
     if (store.userId) {
       await this.usersRepository.delete(store.userId);
     }
 
-    const result = await this.storesRepository.delete(id);
     if (result.affected === 0) {
       throw new BadRequestException(`Store with ID ${id} not found`);
     }

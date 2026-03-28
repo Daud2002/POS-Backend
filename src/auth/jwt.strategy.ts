@@ -5,6 +5,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from '../entities';
 import { ConfigService } from '@nestjs/config';
+import { AuthService } from './auth.service';
 
 
 @Injectable()
@@ -13,12 +14,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     @InjectRepository(User)
     private usersRepository: Repository<User>,
     private configService: ConfigService,
+    private authService: AuthService,
   ) {
+    const jwtSecret = configService.get<string>('JWT_SECRET', 'default_jwt_secret');
+
+    if (!jwtSecret) {
+      throw new Error('JWT_SECRET is not defined in environment variables');
+    }
+    
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('JWT_SECRET'),
-      // secretOrKey: "your_jwt_secret_key_change_this_in_production",
+      secretOrKey: jwtSecret,
     });
   }
 
@@ -26,6 +33,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const user = await this.usersRepository.findOne({
       where: { id: payload.sub },
     });
-    return user;
+    if (!user) return null;
+    return await this.authService.getUserWithStore(user);
   }
 }

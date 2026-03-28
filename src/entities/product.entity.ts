@@ -14,6 +14,9 @@ export class Product {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  @Column('uuid', { nullable: true })
+  storeId: string;
+
   @Column()
   name: string;
 
@@ -29,6 +32,9 @@ export class Product {
   @Column({ type: 'int', default: 0 })
   stock: number;
 
+  @Column({ type: 'int', default: 5, nullable: true })
+  lowStockAlertQuantity: number;
+
   @Column({ nullable: true })
   sku: string;
 
@@ -40,6 +46,10 @@ export class Product {
 
   @Column({ default: true })
   isActive: boolean;
+
+  @ManyToOne('Store')
+  @JoinColumn({ name: 'storeId' })
+  store: any;
 
   @ManyToOne('Category', 'products')
   @JoinColumn({ name: 'categoryId' })

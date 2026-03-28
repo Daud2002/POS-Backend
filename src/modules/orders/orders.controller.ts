@@ -9,32 +9,61 @@ import {
   UseGuards,
   Query,
   Request,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { Request as ExpressRequest } from 'express';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto, UpdateOrderDto } from './dto/order.dto';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Store, Employee } from '../../entities';
 
 @ApiTags('Orders')
 @Controller('orders')
 export class OrdersController {
-  constructor(private readonly ordersService: OrdersService) {}
+  constructor(
+    private readonly ordersService: OrdersService,
+    @InjectRepository(Store)
+    private storesRepository: Repository<Store>,
+    @InjectRepository(Employee)
+    private employeesRepository: Repository<Employee>,
+  ) {}
+
+  private async getStoreIdFromUser(user: any): Promise<string | undefined> {
+    if (user.role === 'admin') {
+      return undefined;
+    } else if (user.role === 'store_owner') {
+      const store = await this.storesRepository.findOne({ where: { userId: user.id } });
+      if (!store) throw new BadRequestException('Store not found for this user');
+      return store.id;
+    } else if (user.role === 'employee' || user.role === 'cashier') {
+      const employee = await this.employeesRepository.findOne({ where: { userId: user.id } });
+      if (!employee) throw new BadRequestException('Employee record not found');
+      return employee.storeId;
+    }
+    throw new BadRequestException('Invalid user role for this operation');
+  }
 
   @UseGuards(JwtAuthGuard)
   @Post()
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create a new order' })
-  create(@Body() createOrderDto: CreateOrderDto, @Request() req: ExpressRequest) {
-    return this.ordersService.create(createOrderDto, (req.user as any).id);
+  async create(@Body() createOrderDto: CreateOrderDto, @Request() req: ExpressRequest) {
+    const storeId = await this.getStoreIdFromUser(req.user);
+    return this.ordersService.create(createOrderDto, (req.user as any).id, storeId);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get()
-  @ApiOperation({ summary: 'Get all orders' })
-  @ApiQuery({ name: 'skip', required: false })
-  @ApiQuery({ name: 'take', required: false })
-  findAll(@Query('skip') skip?: number, @Query('take') take?: number) {
-    return this.ordersService.findAll(skip, take);
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get all orders for store' })
+  @ApiQuery({ name: 'skip', required: false, type: Number })
+  @ApiQuery({ name: 'take', required: false, type: Number })
+  async findAll(@Request() req: ExpressRequest, @Query('skip') skip?: number, @Query('take') take?: number) {
+    const storeId = await this.getStoreIdFromUser(req.user);
+    return this.ordersService.findAll(storeId, skip, take);
   }
 
   @Get(':id')
@@ -44,26 +73,33 @@ export class OrdersController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Get('customer/:customerId')
+  @ApiBearerAuth()
+  @ApiQuery({ name: 'storeId', required: true, type: String })
+  async findByCustomer(@Request() req: ExpressRequest, @Param('customerId') customerId: string) {
+    const storeId = await this.getStoreIdFromUser(req.user);
+    return this.ordersService.findByCustomer(customerId, storeId);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Patch(':id')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update an order' })
-  update(
+  async update(
+    @Request() req: ExpressRequest,
     @Param('id') id: string,
     @Body() updateOrderDto: UpdateOrderDto,
   ) {
-    return this.ordersService.update(id, updateOrderDto);
+    const storeId = await this.getStoreIdFromUser(req.user);
+    return this.ordersService.update(id, updateOrderDto, storeId);
   }
 
   @UseGuards(JwtAuthGuard)
   @Delete(':id')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Delete an order' })
-  remove(@Param('id') id: string) {
-    return this.ordersService.remove(id);
-  }
-
-  @Get('customer/:customerId')
-  findByCustomer(@Param('customerId') customerId: string) {
-    return this.ordersService.findByCustomer(customerId);
+  async remove(@Request() req: ExpressRequest, @Param('id') id: string) {
+    const storeId = await this.getStoreIdFromUser(req.user);
+    return this.ordersService.remove(id, storeId);
   }
 }

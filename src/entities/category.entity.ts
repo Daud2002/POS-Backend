@@ -5,12 +5,17 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   OneToMany,
+  ManyToOne,
+  JoinColumn,
 } from 'typeorm';
 
 @Entity('categories')
 export class Category {
   @PrimaryGeneratedColumn('uuid')
   id: string;
+
+  @Column('uuid', { nullable: true })
+  storeId: string;
 
   @Column()
   name: string;
@@ -23,6 +28,10 @@ export class Category {
 
   @Column({ default: true })
   isActive: boolean;
+
+  @ManyToOne('Store')
+  @JoinColumn({ name: 'storeId' })
+  store: any;
 
   @CreateDateColumn()
   createdAt: Date;
