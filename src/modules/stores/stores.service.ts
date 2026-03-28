@@ -47,6 +47,8 @@ export class StoresService {
     // Create user for store owner
     const hashedPassword = await bcrypt.hash(createStoreDto.password, 10);
     const user = this.usersRepository.create({
+      name: createStoreDto.name,
+      phone: createStoreDto.phone,
       email: createStoreDto.email,
       passwordHash: hashedPassword,
       role: 'store_owner' as any,
