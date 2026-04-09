@@ -29,7 +29,7 @@ export class ProductsController {
     private storesRepository: Repository<Store>,
     @InjectRepository(Employee)
     private employeesRepository: Repository<Employee>,
-  ) {}
+  ) { }
 
   private async getStoreIdFromUser(user: any): Promise<string> {
     if (user.role === 'store_owner') {
@@ -63,6 +63,19 @@ export class ProductsController {
   findAll(@Query('storeId') storeId?: string, @Query('skip') skip?: number, @Query('take') take?: number) {
     if (!storeId) throw new BadRequestException('storeId query parameter is required');
     return this.productsService.findAll(storeId, skip, take);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('active')
+  @ApiOperation({ summary: 'Get all active products for store' })
+  @ApiQuery({ name: 'storeId', required: true, type: String })
+  @ApiQuery({ name: 'skip', required: false, type: Number })
+  @ApiQuery({ name: 'take', required: false, type: Number })
+  @ApiResponse({ status: 200, description: 'List of products' })
+  findActive(@Query('storeId') storeId?: string, @Query('skip') skip?: number, @Query('take') take?: number) {
+    console.log(`Received request to find active products with storeId=${storeId}, skip=${skip}, take=${take}`);
+    if (!storeId) throw new BadRequestException('storeId query parameter is required');
+    return this.productsService.findActive(storeId, skip, take);
   }
 
   @Get(':id')

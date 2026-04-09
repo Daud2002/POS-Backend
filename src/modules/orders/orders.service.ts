@@ -45,9 +45,9 @@ export class OrdersService {
 
     const orderNumber = `ORD-${Date.now()}`;
 
-    let subtotal = 0;
-    const orderItems: OrderItem[] = [];
-
+    // Step 1: Validate ALL items before processing any
+    const validatedProducts = new Map();
+    
     for (const item of items) {
       const product = await this.productsRepository.findOne({
         where: { id: item.productId, storeId },
@@ -56,19 +56,37 @@ export class OrdersService {
       if (!product) {
         throw new BadRequestException(`Product ${item.productId} not found or does not belong to your store`);
       }
+      
+      if (!product.isActive) {
+        throw new BadRequestException(`Product "${product.name}" is no longer available or has been discontinued`);
+      }
+      
       if (product.stock < item.quantity) {
         throw new BadRequestException(`Insufficient stock for product "${product.name}". Available: ${product.stock}, Requested: ${item.quantity}`);
       }
 
-      const itemTotal = item.quantity * item.unitPrice;
+      // Store validated product for later use
+      validatedProducts.set(item.productId, product);
+    }
+
+    // Step 2: All validations passed, now build order items
+    let subtotal = 0;
+    const orderItems: OrderItem[] = [];
+
+    for (const item of items) {
+      const product = validatedProducts.get(item.productId);
+      const itemSubtotal = item.quantity * item.unitPrice;
+      const itemDiscount = item.discount || 0;
+      const itemTotal = itemSubtotal - itemDiscount;
       subtotal += itemTotal;
 
       const orderItem = this.orderItemsRepository.create({
         productId: item.productId,
+        productName: product.name,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
-        subtotal: itemTotal,
-        discount: 0,
+        subtotal: itemSubtotal,
+        discount: itemDiscount,
         total: itemTotal,
       });
 
@@ -77,10 +95,11 @@ export class OrdersService {
 
     const total = subtotal + (tax || 0) - (discount || 0);
 
+    // Step 3: Create and save order
     const order = this.ordersRepository.create({
       storeId,
       orderNumber,
-      customerId: orderData.customerId,
+      customerName: orderData.customerName,
       createdById: userId,
       subtotal,
       tax: tax || 0,
@@ -93,6 +112,7 @@ export class OrdersService {
 
     const savedOrder = await this.ordersRepository.save(order);
 
+    // Step 4: Deduct stock only after order is successfully saved
     for (const item of items) {
       await this.productsService.deductStock(item.productId, item.quantity, storeId);
     }
@@ -108,7 +128,7 @@ export class OrdersService {
     
     return await this.ordersRepository.find({
       where,
-      relations: ['customer', 'createdBy', 'items', 'items.product'],
+      relations: ['createdBy', 'items', 'items.product'],
       skip,
       take,
       order: { createdAt: 'DESC' },

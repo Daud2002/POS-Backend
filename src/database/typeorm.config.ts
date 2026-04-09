@@ -9,11 +9,11 @@ export const typeormConfig = (): TypeOrmModuleOptions => ({
   password: process.env.DATABASE_PASSWORD || 'postgres',
   database: process.env.DATABASE_NAME || 'POS',
   entities: [path.join(__dirname, '../entities/**/*.entity{.ts,.js}')],
-  synchronize: false, // Auto-sync database schema in development
+  synchronize: true, // Auto-sync database schema in development
   logging: process.env.NODE_ENV === 'development',
   dropSchema: process.env.DROP_SCHEMA === 'true', // Set to true to drop and recreate schema
   migrationsRun: false,
-  // ssl: {
-  // rejectUnauthorized: false,
-  // }
+  ssl: {
+  rejectUnauthorized: false,
+  }
 });

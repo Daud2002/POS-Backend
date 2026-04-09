@@ -9,7 +9,7 @@ export class ProductsService {
   constructor(
     @InjectRepository(Product)
     private productsRepository: Repository<Product>,
-  ) {}
+  ) { }
 
   async create(createProductDto: CreateProductDto, storeId: string): Promise<Product> {
     const product = this.productsRepository.create({ ...createProductDto, storeId });
@@ -28,7 +28,7 @@ export class ProductsService {
   async findOne(id: string, storeId?: string): Promise<Product> {
     const where: any = { id };
     if (storeId) where.storeId = storeId;
-    
+
     const product = await this.productsRepository.findOne({
       where,
       relations: ['category'],
@@ -40,6 +40,16 @@ export class ProductsService {
       throw new ForbiddenException('You do not have access to this product');
     }
     return product;
+  }
+
+  async findActive(storeId: string, skip?: number, take?: number): Promise<Product[]> {
+    console.log(`Finding active products for storeId=${storeId}, skip=${skip}, take=${take}`);
+    return await this.productsRepository.find({
+      where: { storeId, isActive: true },
+      relations: ['category'],
+      skip,
+      take,
+    });
   }
 
   async update(
@@ -66,11 +76,11 @@ export class ProductsService {
 
   async deductStock(id: string, quantity: number, storeId: string): Promise<Product> {
     const product = await this.findOne(id, storeId);
-    
+
     if (product.stock < quantity) {
       throw new BadRequestException(`Insufficient stock for product "${product.name}". Available: ${product.stock}, Requested: ${quantity}`);
     }
-    
+
     product.stock -= quantity;
     return await this.productsRepository.save(product);
   }

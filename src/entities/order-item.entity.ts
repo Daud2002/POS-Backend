@@ -1,3 +1,4 @@
+import { Req } from '@nestjs/common';
 import {
   Entity,
   PrimaryGeneratedColumn,
@@ -24,6 +25,9 @@ export class OrderItem {
 
   @Column('uuid')
   productId: string;
+
+  @Column({ nullable: true })
+  productName: string;
 
   @Column({ type: 'int' })
   quantity: number;

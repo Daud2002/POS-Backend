@@ -16,13 +16,18 @@ export class CreateOrderItemDto {
   @IsNotEmpty()
   @IsNumber()
   unitPrice: number;
+
+  @ApiProperty({ example: 50, required: false, description: 'Discount amount for this item' })
+  @IsOptional()
+  @IsNumber()
+  discount: number;
 }
 
 export class CreateOrderDto {
-  @ApiProperty({ example: 'uuid', required: false, description: 'Customer ID' })
+  @ApiProperty({ example: 'John Doe', required: false, description: 'Customer Name' })
   @IsOptional()
   @IsString()
-  customerId: string;
+  customerName: string;
 
   @ApiProperty({ type: [CreateOrderItemDto], description: 'Order items' })
   @IsNotEmpty()

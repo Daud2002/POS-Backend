@@ -20,12 +20,8 @@ export class Order {
   @Column({ unique: true })
   orderNumber: string;
 
-  @ManyToOne('Customer', 'orders', { nullable: true })
-  @JoinColumn({ name: 'customerId' })
-  customer: any;
-
-  @Column('uuid', { nullable: true })
-  customerId: string;
+  @Column({ nullable: true })
+  customerName: string;
 
   @ManyToOne('User', 'orders')
   @JoinColumn({ name: 'createdById' })
