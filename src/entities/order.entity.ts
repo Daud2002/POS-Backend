@@ -9,6 +9,7 @@ import {
   JoinColumn,
 } from 'typeorm';
 import { Customer } from './customer.entity';
+import { User } from './user.entity';
 
 export type OrderStatus = 'pending' | 'paid' | 'unpaid' | 'cancelled' | 'refunded';
 
@@ -33,9 +34,9 @@ export class Order {
   @Column({ nullable: true })
   customerName: string;
 
-  @ManyToOne('User', 'orders')
+  @ManyToOne(() => User, (user) => user.orders)
   @JoinColumn({ name: 'createdById' })
-  createdBy: any;
+  createdBy: User;
 
   @Column('uuid')
   createdById: string;
