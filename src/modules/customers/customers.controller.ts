@@ -41,6 +41,12 @@ export class CustomersController {
     return this.customersService.findOne(id);
   }
 
+  @Get(':id/with-orders')
+  @ApiOperation({ summary: 'Get customer with their orders' })
+  getCustomerWithOrders(@Param('id') id: string) {
+    return this.customersService.getCustomerWithOrders(id);
+  }
+
   @UseGuards(JwtAuthGuard)
   @Patch(':id')
   @ApiBearerAuth()

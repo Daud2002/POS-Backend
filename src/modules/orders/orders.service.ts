@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Order, OrderItem, Product, Store, Employee } from '../../entities';
+import { Order, OrderItem, Product, Store, Employee, Customer } from '../../entities';
 import { CreateOrderDto, UpdateOrderDto } from './dto/order.dto';
 import { ProductsService } from '../products/products.service';
 
@@ -18,6 +18,8 @@ export class OrdersService {
     private storesRepository: Repository<Store>,
     @InjectRepository(Employee)
     private employeesRepository: Repository<Employee>,
+    @InjectRepository(Customer)
+    private customersRepository: Repository<Customer>,
     private productsService: ProductsService,
   ) {}
 
@@ -41,9 +43,19 @@ export class OrdersService {
       throw new BadRequestException('Store ID is required to create an order');
     }
 
-    const { items, tax = 0, discount = 0, ...orderData } = createOrderDto;
+    const { items, tax = 0, discount = 0, customerId, status, ...orderData } = createOrderDto;
 
     const orderNumber = `ORD-${Date.now()}`;
+
+    // If customerId is provided, fetch customer and set customerName from it
+    let customerName: string | undefined;
+    if (customerId) {
+      const customer = await this.customersRepository.findOne({ where: { id: customerId } });
+      if (!customer) {
+        throw new BadRequestException(`Customer with ID ${customerId} not found`);
+      }
+      customerName = customer.name;
+    }
 
     // Step 1: Validate ALL items before processing any
     const validatedProducts = new Map();
@@ -93,20 +105,22 @@ export class OrdersService {
       orderItems.push(orderItem);
     }
 
-    const total = subtotal + (tax || 0) - (discount || 0);
+    const total = createOrderDto.total;
 
-    // Step 3: Create and save order
+    // Step 3: Create and save order (status defaults to 'unpaid' if not provided)
     const order = this.ordersRepository.create({
       storeId,
       orderNumber,
-      customerName: orderData.customerName,
+      customerId: customerId || null,
+      customerName: customerName || null,
       createdById: userId,
       subtotal,
       tax: tax || 0,
       discount: discount || 0,
       total,
       notes: orderData.notes,
-      paymentMethod: (orderData.paymentMethod || 'cash') as 'cash' | 'card' | 'check' | 'online',
+      status: (status as 'paid' | 'unpaid' | 'pending' | 'cancelled' | 'refunded') || 'unpaid',
+      paymentMethod: (orderData.paymentMethod) as any,
       items: orderItems,
     });
 
@@ -115,6 +129,15 @@ export class OrdersService {
     // Step 4: Deduct stock only after order is successfully saved
     for (const item of items) {
       await this.productsService.deductStock(item.productId, item.quantity, storeId);
+    }
+
+    // Step 5: Update customer's totalSpent if customerId was provided
+    if (customerId) {
+      const customer = await this.customersRepository.findOne({ where: { id: customerId } });
+      if (customer) {
+        customer.totalSpent = Number(customer.totalSpent) + Number(total);
+        await this.customersRepository.save(customer);
+      }
     }
 
     return savedOrder;
@@ -128,7 +151,7 @@ export class OrdersService {
     
     return await this.ordersRepository.find({
       where,
-      relations: ['createdBy', 'items', 'items.product'],
+      relations: ['customer', 'createdBy', 'items', 'items.product'],
       skip,
       take,
       order: { createdAt: 'DESC' },
@@ -157,8 +180,15 @@ export class OrdersService {
 
   async update(id: string, updateOrderDto: UpdateOrderDto, storeId?: string): Promise<Order> {
     const order = await this.findOne(id, storeId);
+
     const updated = this.ordersRepository.merge(order, updateOrderDto as any);
     return await this.ordersRepository.save(updated);
+  }
+
+  async markAsPaid(id: string, storeId?: string): Promise<Order> {
+    const order = await this.findOne(id, storeId);
+    order.status = 'paid';
+    return await this.ordersRepository.save(order);
   }
 
   async remove(id: string, storeId?: string): Promise<void> {
@@ -174,7 +204,20 @@ export class OrdersService {
 
     return await this.ordersRepository.find({
       where,
-      relations: ['items', 'items.product'],
+      relations: ['customer', 'items', 'items.product', 'createdBy'],
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  async findByCustomerAndStatus(customerId: string, status: string, storeId?: string): Promise<Order[]> {
+    const where: any = { customerId, status };
+    if (storeId) {
+      where.storeId = storeId;
+    }
+
+    return await this.ordersRepository.find({
+      where,
+      relations: ['customer', 'items', 'items.product', 'createdBy'],
       order: { createdAt: 'DESC' },
     });
   }

@@ -61,8 +61,17 @@ export class OrdersController {
   @ApiOperation({ summary: 'Get all orders for store' })
   @ApiQuery({ name: 'skip', required: false, type: Number })
   @ApiQuery({ name: 'take', required: false, type: Number })
-  async findAll(@Request() req: ExpressRequest, @Query('skip') skip?: number, @Query('take') take?: number) {
+  @ApiQuery({ name: 'customerId', required: false, type: String })
+  async findAll(
+    @Request() req: ExpressRequest,
+    @Query('skip') skip?: number,
+    @Query('take') take?: number,
+    @Query('customerId') customerId?: string,
+  ) {
     const storeId = await this.getStoreIdFromUser(req.user);
+    if (customerId) {
+      return this.ordersService.findByCustomer(customerId, storeId);
+    }
     return this.ordersService.findAll(storeId, skip, take);
   }
 
@@ -92,6 +101,15 @@ export class OrdersController {
   ) {
     const storeId = await this.getStoreIdFromUser(req.user);
     return this.ordersService.update(id, updateOrderDto, storeId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(':id/mark-as-paid')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Mark an order as paid' })
+  async markAsPaid(@Request() req: ExpressRequest, @Param('id') id: string) {
+    const storeId = await this.getStoreIdFromUser(req.user);
+    return this.ordersService.markAsPaid(id, storeId);
   }
 
   @UseGuards(JwtAuthGuard)

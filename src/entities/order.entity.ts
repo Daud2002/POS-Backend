@@ -9,6 +9,8 @@ import {
   JoinColumn,
 } from 'typeorm';
 
+export type OrderStatus = 'pending' | 'paid' | 'unpaid' | 'cancelled' | 'refunded';
+
 @Entity('orders')
 export class Order {
   @PrimaryGeneratedColumn('uuid')
@@ -19,6 +21,13 @@ export class Order {
 
   @Column({ unique: true })
   orderNumber: string;
+
+  @Column('uuid', { nullable: true })
+  customerId: string;
+
+  @ManyToOne('Customer', 'orders')
+  @JoinColumn({ name: 'customerId' })
+  customer: any;
 
   @Column({ nullable: true })
   customerName: string;
@@ -32,10 +41,11 @@ export class Order {
 
   @Column({
     type: 'enum',
-    enum: ['pending', 'completed', 'cancelled', 'refunded'],
-    default: 'completed',
+    enum: ['pending', 'paid', 'unpaid', 'cancelled', 'refunded'],
+    default: 'unpaid',
   })
-  status: 'pending' | 'completed' | 'cancelled' | 'refunded';
+  status: OrderStatus;
+
 
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   subtotal: number;
@@ -56,6 +66,7 @@ export class Order {
     type: 'enum',
     enum: ['cash', 'card', 'check', 'online'],
     default: 'cash',
+    nullable: true,
   })
   paymentMethod: 'cash' | 'card' | 'check' | 'online';
 

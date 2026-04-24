@@ -7,35 +7,25 @@ export class CreateCustomerDto {
   @IsString()
   name: string;
 
-  @ApiProperty({ example: 'john@example.com', required: false })
-  @IsOptional()
-  @IsEmail()
-  email: string;
-
-  @ApiProperty({ example: '555-1234', required: false })
-  @IsOptional()
+  @ApiProperty({ example: '555-1234', description: 'Phone number' })
+  @IsNotEmpty()
   @IsString()
   phone: string;
 
-  @ApiProperty({ example: '123 Main St', required: false })
-  @IsOptional()
+  @ApiProperty({ example: '123 Main St', description: 'Address' })
+  @IsNotEmpty()
   @IsString()
   address: string;
+
+  @ApiProperty({ example: 'john@example.com', required: false, description: 'Email (optional)' })
+  @IsOptional()
+  @IsEmail()
+  email: string;
 
   @ApiProperty({ example: 'New York', required: false })
   @IsOptional()
   @IsString()
   city: string;
-
-  @ApiProperty({ example: '10001', required: false })
-  @IsOptional()
-  @IsString()
-  postalCode: string;
-
-  @ApiProperty({ example: 'USA', required: false })
-  @IsOptional()
-  @IsString()
-  country: string;
 }
 
 export class UpdateCustomerDto {
@@ -44,11 +34,6 @@ export class UpdateCustomerDto {
   @IsString()
   name: string;
 
-  @ApiProperty({ example: 'john@example.com', required: false })
-  @IsOptional()
-  @IsEmail()
-  email: string;
-
   @ApiProperty({ example: '555-1234', required: false })
   @IsOptional()
   @IsString()
@@ -59,18 +44,13 @@ export class UpdateCustomerDto {
   @IsString()
   address: string;
 
+  @ApiProperty({ example: 'john@example.com', required: false })
+  @IsOptional()
+  @IsEmail()
+  email: string;
+
   @ApiProperty({ example: 'New York', required: false })
   @IsOptional()
   @IsString()
   city: string;
-
-  @ApiProperty({ example: '10001', required: false })
-  @IsOptional()
-  @IsString()
-  postalCode: string;
-
-  @ApiProperty({ example: 'USA', required: false })
-  @IsOptional()
-  @IsString()
-  country: string;
 }

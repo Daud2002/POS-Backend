@@ -1,5 +1,6 @@
-import { IsNotEmpty, IsOptional, IsString, IsNumber, IsEnum } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, IsNumber, IsEnum, IsUUID, IsBoolean } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { IsNull } from 'typeorm';
 
 export class CreateOrderItemDto {
   @ApiProperty({ example: 'uuid', description: 'Product ID' })
@@ -24,10 +25,10 @@ export class CreateOrderItemDto {
 }
 
 export class CreateOrderDto {
-  @ApiProperty({ example: 'John Doe', required: false, description: 'Customer Name' })
+  @ApiProperty({ example: 'uuid', required: false, description: 'Customer ID (link to existing customer)' })
   @IsOptional()
-  @IsString()
-  customerName: string;
+  @IsUUID()
+  customerId: string;
 
   @ApiProperty({ type: [CreateOrderItemDto], description: 'Order items' })
   @IsNotEmpty()
@@ -48,16 +49,26 @@ export class CreateOrderDto {
   @IsString()
   notes: string;
 
-  @ApiProperty({ example: 'cash', required: false, enum: ['cash', 'card', 'check', 'online'] })
+  @ApiProperty({ example: 'cash', required: false, nullable: true, enum: ['cash', 'card', 'check', 'online'] })
   @IsOptional()
   @IsEnum(['cash', 'card', 'check', 'online'])
   paymentMethod: string;
+
+  @ApiProperty({ example: 'unpaid', required: false, enum: ['pending', 'paid', 'unpaid', 'cancelled', 'refunded'] })
+  @IsOptional()
+  @IsEnum(['pending', 'paid', 'unpaid', 'cancelled', 'refunded'])
+  status: string;
+
+  @ApiProperty({ example: 12345, required: true })
+  @IsNotEmpty()
+  @IsNumber()
+  total: number;
 }
 
 export class UpdateOrderDto {
-  @ApiProperty({ example: 'completed', required: false, enum: ['pending', 'completed', 'cancelled', 'refunded'] })
+  @ApiProperty({ example: 'paid', required: false, enum: ['pending', 'paid', 'unpaid', 'cancelled', 'refunded'] })
   @IsOptional()
-  @IsEnum(['pending', 'completed', 'cancelled', 'refunded'])
+  @IsEnum(['pending', 'paid', 'unpaid', 'cancelled', 'refunded'])
   status: string;
 
   @ApiProperty({ example: 159.99, required: false })
@@ -79,4 +90,49 @@ export class UpdateOrderDto {
   @IsOptional()
   @IsEnum(['cash', 'card', 'check', 'online'])
   paymentMethod: string;
+}
+
+export class OrderResponseDto {
+  @ApiProperty({ example: 'uuid' })
+  id: string;
+
+  @ApiProperty({ example: 'ORD-1629XXXXXX' })
+  orderNumber: string;
+
+  @ApiProperty({ example: 'paid', enum: ['pending', 'paid', 'unpaid', 'cancelled', 'refunded'] })
+  status: string;
+
+
+  @ApiProperty()
+  customer?: {
+    id: string;
+    name: string;
+    email?: string;
+    phone?: string;
+    address?: string;
+  };
+
+  @ApiProperty({ example: 100 })
+  subtotal: number;
+
+  @ApiProperty({ example: 15 })
+  tax: number;
+
+  @ApiProperty({ example: 10 })
+  discount: number;
+
+  @ApiProperty({ example: 105 })
+  total: number;
+
+  @ApiProperty({ example: 'cash', enum: ['cash', 'card', 'check', 'online'] })
+  paymentMethod: string;
+
+  @ApiProperty()
+  items: any[];
+
+  @ApiProperty()
+  createdAt: Date;
+
+  @ApiProperty()
+  updatedAt: Date;
 }

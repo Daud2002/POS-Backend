@@ -51,4 +51,7 @@ export class UserResponseDto {
 
   @ApiProperty()
   updatedAt: string;
+
+  @ApiProperty({ description: 'Currency code from store', example: 'PKR' })
+  currency?: string;
 }

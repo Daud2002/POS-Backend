@@ -9,6 +9,7 @@ import { ProductsModule } from './modules/products/products.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { OrdersModule } from './modules/orders/orders.module';
+import { InvoicesModule } from './modules/invoices/invoices.module';
 import { StoresModule } from './modules/stores/stores.module';
 import { UsersModule } from './modules/users/users.module';
 import { EmployeesModule } from './modules/employees/employees.module';
@@ -26,6 +27,7 @@ import { EmployeesModule } from './modules/employees/employees.module';
     CategoriesModule,
     CustomersModule,
     OrdersModule,
+    InvoicesModule,
     StoresModule,
     UsersModule,
     EmployeesModule,

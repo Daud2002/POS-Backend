@@ -18,20 +18,14 @@ export class Customer {
   @Column({ nullable: true, unique: true })
   email: string;
 
-  @Column({ nullable: true })
+  @Column()
   phone: string;
 
-  @Column({ nullable: true })
+  @Column()
   address: string;
 
   @Column({ nullable: true })
   city: string;
-
-  @Column({ nullable: true })
-  postalCode: string;
-
-  @Column({ nullable: true })
-  country: string;
 
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
   totalSpent: number;
