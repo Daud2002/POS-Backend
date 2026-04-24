@@ -8,6 +8,7 @@ import {
   OneToMany,
   JoinColumn,
 } from 'typeorm';
+import { Customer } from './customer.entity';
 
 export type OrderStatus = 'pending' | 'paid' | 'unpaid' | 'cancelled' | 'refunded';
 
@@ -25,9 +26,9 @@ export class Order {
   @Column('uuid', { nullable: true })
   customerId: string;
 
-  @ManyToOne('Customer', 'orders')
+  @ManyToOne(() => Customer, (customer) => customer.orders)
   @JoinColumn({ name: 'customerId' })
-  customer: any;
+  customer: Customer;
 
   @Column({ nullable: true })
   customerName: string;
