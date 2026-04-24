@@ -8,6 +8,8 @@ import {
   ManyToOne,
   JoinColumn,
 } from 'typeorm';
+import { Store } from './store.entity';
+import { Product } from './product.entity';
 
 @Entity('categories')
 export class Category {
@@ -29,9 +31,9 @@ export class Category {
   @Column({ default: true })
   isActive: boolean;
 
-  @ManyToOne('Store')
+  @ManyToOne(() => Store)
   @JoinColumn({ name: 'storeId' })
-  store: any;
+  store: Store;
 
   @CreateDateColumn()
   createdAt: Date;
@@ -39,6 +41,6 @@ export class Category {
   @UpdateDateColumn()
   updatedAt: Date;
 
-  @OneToMany('Product', 'category')
-  products: any[];
+  @OneToMany(() => Product, (product) => product.category)
+  products: Product[];
 }

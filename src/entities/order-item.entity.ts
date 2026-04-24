@@ -1,4 +1,3 @@
-import { Req } from '@nestjs/common';
 import {
   Entity,
   PrimaryGeneratedColumn,
@@ -6,22 +5,24 @@ import {
   ManyToOne,
   JoinColumn,
 } from 'typeorm';
+import { Order } from './order.entity';
+import { Product } from './product.entity';
 
 @Entity('order_items')
 export class OrderItem {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @ManyToOne('Order', 'items')
+  @ManyToOne(() => Order, (order) => order.items)
   @JoinColumn({ name: 'orderId' })
-  order: any;
+  order: Order;
 
   @Column('uuid')
   orderId: string;
 
-  @ManyToOne('Product', 'orderItems')
+  @ManyToOne(() => Product, (product) => product.orderItems)
   @JoinColumn({ name: 'productId' })
-  product: any;
+  product: Product;
 
   @Column('uuid')
   productId: string;

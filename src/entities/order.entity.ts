@@ -10,8 +10,9 @@ import {
 } from 'typeorm';
 import { Customer } from './customer.entity';
 import { User } from './user.entity';
+import { OrderItem } from './order-item.entity';
 
-export type OrderStatus = 'pending' | 'paid' | 'unpaid' | 'cancelled' | 'refunded';
+export type OrderStatus = 'pending' | 'paid' | 'unpaid' | 'cancelled' | 'refunded' | 'completed';
 
 @Entity('orders')
 export class Order {
@@ -43,7 +44,7 @@ export class Order {
 
   @Column({
     type: 'enum',
-    enum: ['pending', 'paid', 'unpaid', 'cancelled', 'refunded'],
+    enum: ['pending', 'paid', 'unpaid', 'cancelled', 'refunded', 'completed'],
     default: 'unpaid',
   })
   status: OrderStatus;
@@ -78,9 +79,9 @@ export class Order {
   @UpdateDateColumn()
   updatedAt: Date;
 
-  @OneToMany('OrderItem', 'order', {
+  @OneToMany(() => OrderItem, (item) => item.order, {
     cascade: true,
     eager: true,
   })
-  items: any[];
+  items: OrderItem[];
 }

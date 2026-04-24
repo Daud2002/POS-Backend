@@ -1,4 +1,5 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, OneToOne, JoinColumn } from 'typeorm';
+import { User } from './user.entity';
 
 @Entity('stores')
 export class Store {
@@ -39,7 +40,7 @@ export class Store {
   @UpdateDateColumn()
   updatedAt: Date;
 
-  @OneToOne('User', { nullable: false })
+  @OneToOne(() => User, { nullable: false })
   @JoinColumn({ name: 'userId' })
-  owner: any;
+  owner: User;
 }

@@ -7,6 +7,8 @@ import {
   OneToMany,
   OneToOne,
 } from 'typeorm';
+import { Order } from './order.entity';
+import { Store } from './store.entity';
 
 @Entity('users')
 export class User {
@@ -37,9 +39,9 @@ export class User {
   @UpdateDateColumn()
   updatedAt: Date;
 
-  @OneToMany('Order', 'createdBy')
-  orders: any[];
+  @OneToMany(() => Order, (order) => order.createdBy)
+  orders: Order[];
 
-  @OneToOne('Store', 'owner', { nullable: true })
-  store?: any;
+  @OneToOne(() => Store, (store) => store.owner, { nullable: true })
+  store?: Store;
 }
