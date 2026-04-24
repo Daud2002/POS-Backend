@@ -14,7 +14,7 @@ import {
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { Request as ExpressRequest } from 'express';
 import { OrdersService } from './orders.service';
-import { CreateOrderDto, UpdateOrderDto } from './dto/order.dto';
+import { CreateOrderDto, UpdateOrderDto, MarkAsPaidDto } from './dto/order.dto';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -107,9 +107,13 @@ export class OrdersController {
   @Patch(':id/mark-as-paid')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Mark an order as paid' })
-  async markAsPaid(@Request() req: ExpressRequest, @Param('id') id: string) {
+  async markAsPaid(
+    @Request() req: ExpressRequest,
+    @Param('id') id: string,
+    @Body() markAsPaidDto: MarkAsPaidDto,
+  ) {
     const storeId = await this.getStoreIdFromUser(req.user);
-    return this.ordersService.markAsPaid(id, storeId);
+    return this.ordersService.markAsPaid(id, storeId, markAsPaidDto.paymentMethod);
   }
 
   @UseGuards(JwtAuthGuard)

@@ -92,6 +92,13 @@ export class UpdateOrderDto {
   paymentMethod: string;
 }
 
+export class MarkAsPaidDto {
+  @ApiProperty({ example: 'card', required: false, enum: ['cash', 'card', 'check', 'online'] })
+  @IsOptional()
+  @IsEnum(['cash', 'card', 'check', 'online'])
+  paymentMethod: string;
+}
+
 export class OrderResponseDto {
   @ApiProperty({ example: 'uuid' })
   id: string;

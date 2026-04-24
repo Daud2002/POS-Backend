@@ -185,9 +185,12 @@ export class OrdersService {
     return await this.ordersRepository.save(updated);
   }
 
-  async markAsPaid(id: string, storeId?: string): Promise<Order> {
+  async markAsPaid(id: string, storeId?: string, paymentMethod?: string): Promise<Order> {
     const order = await this.findOne(id, storeId);
     order.status = 'paid';
+    if (paymentMethod) {
+      order.paymentMethod = paymentMethod as any;
+    }
     return await this.ordersRepository.save(order);
   }
 
