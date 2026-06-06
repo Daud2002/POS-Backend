@@ -29,21 +29,24 @@ export class AuthService {
   async getUserWithStore(user: any) {
     let storeId: string | undefined;
     let currency: string | undefined;
-    
+    let printerConfig: string | undefined;
+
     if (user.role === 'store_owner') {
       const store = await this.storesRepository.findOne({ where: { userId: user.id } });
       storeId = store?.id;
       currency = store?.currency;
+      printerConfig = store?.printerConfig;
     } else if (user.role === 'employee' || user.role === 'cashier') {
       const employee = await this.employeesRepository.findOne({ where: { userId: user.id } });
       storeId = employee?.storeId;
       if (storeId) {
         const store = await this.storesRepository.findOne({ where: { id: storeId } });
         currency = store?.currency;
+        printerConfig = store?.printerConfig;
       }
     }
-    
-    return { ...user, storeId, currency };
+
+    return { ...user, storeId, currency, printerConfig };
   }
 
   async login(user: any) {

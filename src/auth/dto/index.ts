@@ -54,4 +54,7 @@ export class UserResponseDto {
 
   @ApiProperty({ description: 'Currency code from store', example: 'PKR' })
   currency?: string;
+
+  @ApiProperty({ description: 'QZ Tray printer name from store', example: 'BP-80' })
+  printerConfig?: string;
 }

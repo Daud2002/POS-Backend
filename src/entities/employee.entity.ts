@@ -9,7 +9,7 @@ import {
   JoinColumn,
 } from 'typeorm';
 
-@Entity('employees')
+@Entity('employee_details')
 export class Employee {
   @PrimaryGeneratedColumn('uuid')
   id: string;

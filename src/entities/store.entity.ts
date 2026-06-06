@@ -34,6 +34,9 @@ export class Store {
   @Column({ type: 'varchar', length: 255, nullable: true })
   email?: string;
 
+  @Column({ type: 'varchar', length: 255, nullable: true, default: 'BP-80' })
+  printerConfig?: string;
+
   @CreateDateColumn()
   createdAt: Date;
 

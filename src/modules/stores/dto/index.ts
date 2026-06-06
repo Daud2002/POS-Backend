@@ -39,6 +39,11 @@ export class CreateStoreDto {
   @IsOptional()
   @IsString()
   phone?: string;
+
+  @ApiProperty({ example: 'BP-80', required: false, description: 'QZ Tray printer name used for receipts' })
+  @IsOptional()
+  @IsString()
+  printerConfig?: string;
 }
 
 export class UpdateStoreDto {
@@ -76,4 +81,9 @@ export class UpdateStoreDto {
   @IsOptional()
   @IsString()
   email?: string;
+
+  @ApiProperty({ required: false, description: 'QZ Tray printer name used for receipts' })
+  @IsOptional()
+  @IsString()
+  printerConfig?: string;
 }
