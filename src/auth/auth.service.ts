@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
@@ -56,6 +56,37 @@ export class AuthService {
       accessToken: this.jwtService.sign(payload),
       user: userWithStore,
     };
+  }
+
+  /**
+   * Changes a signed-in user's own password.
+   *
+   * Note: JWTs carry no `jti` or password version, so tokens issued before the
+   * change stay valid. That is consistent with the existing no-refresh-token
+   * design; invalidating other sessions would need a token-version column.
+   */
+  async changePassword(userId: string, currentPassword: string, newPassword: string) {
+    const user = await this.usersRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
+    const matches = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!matches) {
+      throw new BadRequestException('Current password is incorrect');
+    }
+
+    if (currentPassword === newPassword) {
+      throw new BadRequestException('New password must be different from the current one');
+    }
+
+    // Same cost factor as register().
+    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    await this.usersRepository.save(user);
+
+    // Deliberately does not echo the user entity — getUserWithStore already
+    // leaks passwordHash on /auth/me; don't add a second place it can escape.
+    return { message: 'Password updated successfully' };
   }
 
   async register(email: string, password: string, name: string) {

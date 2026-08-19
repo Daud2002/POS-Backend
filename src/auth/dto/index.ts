@@ -27,6 +27,17 @@ export class RegisterDto {
   name: string;
 }
 
+export class ChangePasswordDto {
+  @ApiProperty({ example: 'oldpassword123', description: 'The user\'s current password' })
+  @IsNotEmpty()
+  currentPassword: string;
+
+  @ApiProperty({ example: 'newpassword123', description: 'The new password, min 6 characters' })
+  @IsNotEmpty()
+  @MinLength(6)
+  newPassword: string;
+}
+
 export class UserResponseDto {
   @ApiProperty()
   id: string;

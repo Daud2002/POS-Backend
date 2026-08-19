@@ -10,7 +10,7 @@ import {
 import { Request as ExpressRequest } from 'express';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
-import { LoginDto, RegisterDto, UserResponseDto } from './dto';
+import { ChangePasswordDto, LoginDto, RegisterDto, UserResponseDto } from './dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
 @ApiTags('Auth')
@@ -74,5 +74,28 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getProfile(@Request() req: ExpressRequest) {
     return await this.authService.getUserWithStore(req.user);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('change-password')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Change the signed-in user\'s password' })
+  @ApiResponse({
+    status: 201,
+    description: 'Password updated',
+    schema: { example: { message: 'Password updated successfully' } },
+  })
+  @ApiResponse({ status: 400, description: 'Current password is incorrect' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async changePassword(
+    @Request() req: ExpressRequest,
+    @Body() changePasswordDto: ChangePasswordDto,
+  ) {
+    const user = req.user as { id: string };
+    return await this.authService.changePassword(
+      user.id,
+      changePasswordDto.currentPassword,
+      changePasswordDto.newPassword,
+    );
   }
 }

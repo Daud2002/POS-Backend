@@ -22,31 +22,31 @@ const usersToSeed = [
     password: 'admin123',
     name: 'Admin User',
     role: 'admin' as const,
-  },
-  {
-    email: 'storeowner@poscloud.com',
-    password: 'storeowner123',
-    name: 'Store Owner User',
-    role: 'store_owner' as const,
-  },
-  {
-    email: 'cashier@poscloud.com',
-    password: 'cashier123',
-    name: 'Cashier User',
-    role: 'cashier' as const,
-  },
-  {
-    email: 'employee@poscloud.com',
-    password: 'employee123',
-    name: 'Employee User',
-    role: 'employee' as const,
-  },
-  {
-    email: 'customer@poscloud.com',
-    password: 'customer123',
-    name: 'Customer User',
-    role: 'customer' as const,
-  },
+  }
+  // {
+  //   email: 'storeowner@poscloud.com',
+  //   password: 'storeowner123',
+  //   name: 'Store Owner User',
+  //   role: 'store_owner' as const,
+  // },
+  // {
+  //   email: 'cashier@poscloud.com',
+  //   password: 'cashier123',
+  //   name: 'Cashier User',
+  //   role: 'cashier' as const,
+  // },
+  // {
+  //   email: 'employee@poscloud.com',
+  //   password: 'employee123',
+  //   name: 'Employee User',
+  //   role: 'employee' as const,
+  // },
+  // {
+  //   email: 'customer@poscloud.com',
+  //   password: 'customer123',
+  //   name: 'Customer User',
+  //   role: 'customer' as const,
+  // },
 ];
 
 async function seedUsers() {
