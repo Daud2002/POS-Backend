@@ -30,7 +30,8 @@
     "verify:all": "npm run verify:auth && npm run verify:general && npm run verify:restaurant && npm run verify:realtime && npm run verify:order-numbers && npm run verify:pagination",
     "db:seed-restaurant": "ts-node scripts/seed-restaurant.ts",
     "verify:order-numbers": "node scripts/verify-order-numbers.mjs",
-    "verify:pagination": "node scripts/verify-pagination.mjs"
+    "verify:pagination": "node scripts/verify-pagination.mjs",
+    "db:seed-snackfuel": "ts-node scripts/seed-snackfuel.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.3.0",
@@ -39,8 +40,10 @@
     "@nestjs/jwt": "^11.0.1",
     "@nestjs/passport": "^10.0.3",
     "@nestjs/platform-express": "^10.3.0",
+    "@nestjs/platform-socket.io": "^10.4.22",
     "@nestjs/swagger": "^7.1.16",
     "@nestjs/typeorm": "^10.0.0",
+    "@nestjs/websockets": "^10.4.22",
     "bcrypt": "^5.1.1",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.0",
@@ -50,6 +53,7 @@
     "reflect-metadata": "^0.1.13",
     "rimraf": "^5.0.5",
     "rxjs": "^7.8.1",
+    "socket.io": "^4.8.3",
     "swagger-ui-express": "^5.0.1",
     "typeorm": "^0.3.19"
   },
