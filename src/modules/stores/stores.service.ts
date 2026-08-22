@@ -5,6 +5,7 @@ import { Store } from '@/entities';
 import { User } from '@/entities';
 import { Employee } from '@/entities';
 import { CreateStoreDto, UpdateStoreDto } from './dto';
+import { toPage, type Page } from '@/common';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
@@ -25,6 +26,16 @@ export class StoresService {
       order: { createdAt: 'DESC' },
       relations: ['owner'],
     });
+  }
+
+  async findAllPaged(skip: number, take: number): Promise<Page<Store>> {
+    const [items, total] = await this.storesRepository.findAndCount({
+      skip,
+      take,
+      order: { createdAt: 'DESC' },
+      relations: ['owner'],
+    });
+    return toPage(items, total, skip, take);
   }
 
   async findOne(id: string) {

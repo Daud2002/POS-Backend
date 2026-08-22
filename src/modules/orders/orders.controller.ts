@@ -19,6 +19,7 @@ import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Store, Employee } from '../../entities';
+import { parsePaging, parseOptionalPaging, wantsCount } from '@/common';
 
 @ApiTags('Orders')
 @Controller('orders')
@@ -64,21 +65,36 @@ export class OrdersController {
   @ApiQuery({ name: 'customerId', required: false, type: String })
   async findAll(
     @Request() req: ExpressRequest,
-    @Query('skip') skip?: number,
-    @Query('take') take?: number,
+    @Query('skip') skip?: string,
+    @Query('take') take?: string,
     @Query('customerId') customerId?: string,
+    @Query('withCount') withCount?: string,
   ) {
     const storeId = await this.getStoreIdFromUser(req.user);
     if (customerId) {
       return this.ordersService.findByCustomer(customerId, storeId);
     }
-    return this.ordersService.findAll(storeId, skip, take);
+
+    if (wantsCount(withCount)) {
+      const paging = parsePaging(skip, take);
+      return this.ordersService.findAllPaged(storeId, paging.skip, paging.take);
+    }
+    // skip/take arrive as strings; the previous code handed them to TypeORM raw.
+    const paging = parseOptionalPaging(skip, take);
+    return this.ordersService.findAll(storeId, paging.skip, paging.take);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get(':id')
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Get order by ID' })
-  findOne(@Param('id') id: string) {
-    return this.ordersService.findOne(id);
+  @ApiResponse({ status: 403, description: 'Order belongs to another store' })
+  async findOne(@Param('id') id: string, @Request() req: ExpressRequest) {
+    // Previously unguarded and unscoped, so any order in the platform was
+    // readable by ID. findOne() enforces the tenancy check when given a
+    // storeId; admins still pass undefined and read across tenants.
+    const storeId = await this.getStoreIdFromUser(req.user);
+    return this.ordersService.findOne(id, storeId);
   }
 
   @UseGuards(JwtAuthGuard)

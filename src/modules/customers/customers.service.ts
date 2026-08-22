@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Customer, Order } from '../../entities';
 import { CreateCustomerDto, UpdateCustomerDto } from './dto/customer.dto';
+import { toPage, type Page } from '../../common/pagination';
 
 @Injectable()
 export class CustomersService {
@@ -24,6 +25,16 @@ export class CustomersService {
       skip,
       take,
     });
+  }
+
+  async findAllPaged(skip: number, take: number): Promise<Page<Customer>> {
+    const [items, total] = await this.customersRepository.findAndCount({
+      relations: ['orders'],
+      order: { createdAt: 'DESC' },
+      skip,
+      take,
+    });
+    return toPage(items, total, skip, take);
   }
 
   async findOne(id: string): Promise<Customer> {

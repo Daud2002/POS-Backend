@@ -1,8 +1,9 @@
 import { Injectable, BadRequestException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Employee } from '@/entities';
+import { Employee, RESTAURANT_DESIGNATIONS } from '@/entities';
 import { User } from '@/entities';
+import { TenantService, toPage, type Page } from '@/common';
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto';
 import * as bcrypt from 'bcrypt';
 
@@ -13,6 +14,7 @@ export class EmployeesService {
     private employeesRepository: Repository<Employee>,
     @InjectRepository(User)
     private usersRepository: Repository<User>,
+    private tenantService: TenantService,
   ) {}
 
   async findAll(storeId: string, skip = 0, take = 10) {
@@ -23,6 +25,34 @@ export class EmployeesService {
       order: { createdAt: 'DESC' },
       relations: ['user', 'store'],
     });
+  }
+
+  async findAllPaged(storeId: string, skip: number, take: number): Promise<Page<Employee>> {
+    const [items, total] = await this.employeesRepository.findAndCount({
+      where: { storeId },
+      skip,
+      take,
+      order: { createdAt: 'DESC' },
+      relations: ['user', 'store'],
+    });
+    return toPage(items, total, skip, take);
+  }
+
+  /**
+   * Every employee on the platform, for the super-admin screen.
+   *
+   * Replaces an N+1 in the client that fetched the store list and then issued
+   * one employees request per store, holding the whole platform in memory to
+   * render one page.
+   */
+  async findAllAcrossStoresPaged(skip: number, take: number): Promise<Page<Employee>> {
+    const [items, total] = await this.employeesRepository.findAndCount({
+      skip,
+      take,
+      order: { createdAt: 'DESC' },
+      relations: ['user', 'store'],
+    });
+    return toPage(items, total, skip, take);
   }
 
   async findOne(id: string) {
@@ -39,7 +69,31 @@ export class EmployeesService {
     });
   }
 
+  /**
+   * Restaurant staff must hold one of the three roles the app routes on;
+   * anything else would leave them on a screen that does not exist.
+   *
+   * General stores are deliberately left unvalidated: `designation` has always
+   * been a free-text input there, so live rows hold arbitrary titles and a
+   * blanket whitelist would make those employees uneditable.
+   */
+  private async assertDesignationAllowed(storeId: string, designation?: string) {
+    if (!designation) return;
+
+    const store = await this.tenantService.getStore(storeId);
+    if (store.accountType !== 'restaurant') return;
+
+    const normalized = designation.trim().toLowerCase();
+    if (!RESTAURANT_DESIGNATIONS.includes(normalized as any)) {
+      throw new BadRequestException(
+        `A restaurant employee must be one of: ${RESTAURANT_DESIGNATIONS.join(', ')}`,
+      );
+    }
+  }
+
   async create(storeId: string, createEmployeeDto: CreateEmployeeDto) {
+    await this.assertDesignationAllowed(storeId, createEmployeeDto.designation);
+
     // Check if email already exists
     const existingUser = await this.usersRepository.findOne({
       where: { email: createEmployeeDto.email },
@@ -91,6 +145,8 @@ export class EmployeesService {
     if (!employee) {
       throw new BadRequestException(`Employee with ID ${id} not found`);
     }
+
+    await this.assertDesignationAllowed(employee.storeId, updateEmployeeDto.designation);
 
     // If email is being updated, check for conflicts
     if (updateEmployeeDto.email && updateEmployeeDto.email !== employee.email) {

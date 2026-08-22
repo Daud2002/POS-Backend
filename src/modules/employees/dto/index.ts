@@ -38,10 +38,25 @@ export class CreateEmployeeDto {
   @IsDateString()
   joinDate?: string;
 
-  @ApiProperty({ example: 'cashier', enum: ['cashier', 'manager', 'staff'], required: false })
+  /**
+   * Free text for general stores, where live data already holds arbitrary
+   * values like "Manager" or "Sales Rep". Restaurant stores are restricted to
+   * waiter | kitchen | cashier, enforced in the service where the store's
+   * account type is known.
+   */
+  @ApiProperty({
+    example: 'cashier',
+    enum: ['cashier', 'manager', 'staff', 'waiter', 'kitchen'],
+    required: false,
+  })
   @IsOptional()
   @IsString()
-  designation?: 'cashier' | 'manager' | 'staff';
+  designation?: string;
+
+  @ApiProperty({ required: false, description: 'Default printer for this station (optional).' })
+  @IsOptional()
+  @IsString()
+  printerName?: string;
 
   @ApiProperty({ example: true, required: false, default: true })
   @IsOptional()
@@ -93,7 +108,12 @@ export class UpdateEmployeeDto {
   @ApiProperty({ required: false })
   @IsOptional()
   @IsString()
-  designation?: 'cashier' | 'manager' | 'staff';
+  designation?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  printerName?: string;
 
   @ApiProperty({ required: false })
   @IsOptional()

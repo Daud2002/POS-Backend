@@ -4,6 +4,8 @@ import { Repository } from 'typeorm';
 import { Order, OrderItem, Product, Store, Employee, Customer } from '../../entities';
 import { CreateOrderDto, UpdateOrderDto } from './dto/order.dto';
 import { ProductsService } from '../products/products.service';
+import { generateOrderNumber } from '../../common/order-number';
+import { toPage, type Page } from '../../common/pagination';
 
 @Injectable()
 export class OrdersService {
@@ -45,7 +47,7 @@ export class OrdersService {
 
     const { items, tax = 0, discount = 0, customerId, status, ...orderData } = createOrderDto;
 
-    const orderNumber = `ORD-${Date.now()}`;
+    const orderNumber = generateOrderNumber();
 
     // If customerId is provided, fetch customer and set customerName from it
     let customerName: string | undefined;
@@ -156,6 +158,20 @@ export class OrdersService {
       take,
       order: { createdAt: 'DESC' },
     });
+  }
+
+  async findAllPaged(storeId: string | undefined, skip: number, take: number): Promise<Page<Order>> {
+    const where: any = {};
+    if (storeId) where.storeId = storeId;
+
+    const [items, total] = await this.ordersRepository.findAndCount({
+      where,
+      relations: ['customer', 'createdBy', 'items', 'items.product'],
+      skip,
+      take,
+      order: { createdAt: 'DESC' },
+    });
+    return toPage(items, total, skip, take);
   }
 
   async findOne(id: string, storeId?: string): Promise<Order> {

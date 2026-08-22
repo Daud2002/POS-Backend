@@ -12,8 +12,40 @@ export class Store {
   @Column({ type: 'varchar', length: 255 })
   name: string;
 
+  /**
+   * Legacy cosmetic label ('Café', 'Bakery', ...). Superseded by `accountType`
+   * and no longer written by the UI. Deliberately NOT dropped: `synchronize`
+   * runs against production, so removing it would issue a DROP COLUMN on
+   * deploy. Retire it in its own dedicated release.
+   */
   @Column({ type: 'varchar', length: 100, nullable: true })
   type?: string;
+
+  /**
+   * Drives which product/order flow the tenant gets. `general` is the original
+   * behaviour and the default, so every pre-existing store keeps working
+   * untouched. Immutable once set — switching would strand tables and orders.
+   */
+  @Column({
+    type: 'enum',
+    enum: ['general', 'restaurant'],
+    enumName: 'stores_account_type_enum',
+    default: 'general',
+  })
+  accountType: 'general' | 'restaurant';
+
+  /**
+   * Counter behind the per-restaurant order number, which customers see as
+   * 1, 2, 3… rather than a timestamp.
+   *
+   * It lives on the store (not a global sequence) so each restaurant counts
+   * independently, and it is incremented with an atomic
+   * `UPDATE … SET orderSequence = orderSequence + 1 … RETURNING` inside the
+   * order transaction — a read-then-write would hand two concurrent waiters
+   * the same number.
+   */
+  @Column({ type: 'int', default: 0 })
+  orderSequence: number;
 
   @Column({
     type: 'varchar',

@@ -9,6 +9,8 @@ export interface InvoiceData {
   order: {
     id: string;
     orderNumber: string;
+    /** Restaurant display number (1, 2, 3… per store). Null for general orders. */
+    orderSequence?: number | null;
     createdAt: Date;
     status: string;
     subtotal: number;
@@ -17,7 +19,18 @@ export interface InvoiceData {
     total: number;
     paymentMethod: string;
     items: any[];
+    /**
+     * Restaurant-only fields. Absent/neutral for general orders, so the
+     * existing receipt renderers on web and mobile are unaffected.
+     */
+    orderType?: string;
+    orderStatus?: string;
+    discountType?: string | null;
+    discountValue?: number | null;
   };
+  /** Restaurant dine-in only. Printed on the kitchen ticket and the receipt. */
+  tableName?: string | null;
+  waiterName?: string | null;
   customer?: {
     id: string;
     name: string;
@@ -48,7 +61,7 @@ export class InvoicesService {
     // Fetch order with relations
     const order = await this.ordersRepository.findOne({
       where: storeId ? { id: orderId, storeId } : { id: orderId },
-      relations: ['customer', 'items', 'items.product', 'createdBy'],
+      relations: ['customer', 'items', 'items.product', 'createdBy', 'table'],
     });
 
     if (!order) {
@@ -70,6 +83,7 @@ export class InvoicesService {
       order: {
         id: order.id,
         orderNumber: order.orderNumber,
+        orderSequence: order.orderSequence ?? null,
         createdAt: order.createdAt,
         status: order.status,
         subtotal: Number(order.subtotal),
@@ -77,6 +91,13 @@ export class InvoicesService {
         discount: Number(order.discount),
         total: Number(order.total),
         paymentMethod: order.paymentMethod,
+        orderType: order.orderType,
+        orderStatus: order.orderStatus,
+        discountType: order.discountType ?? null,
+        discountValue:
+          order.discountValue === null || order.discountValue === undefined
+            ? null
+            : Number(order.discountValue),
         items: order.items.map(item => ({
           productName: item.productName,
           quantity: item.quantity,
@@ -84,8 +105,12 @@ export class InvoicesService {
           discount: Number(item.discount),
           subtotal: Number(item.subtotal),
           total: Number(item.total),
+          // Kitchen instructions ride along so a reprint keeps them.
+          notes: item.notes ?? null,
         })),
       },
+      tableName: (order as any).table?.name ?? null,
+      waiterName: (order as any).createdBy?.name ?? null,
     };
 
     // Add customer info if exists

@@ -19,6 +19,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Store, Employee, User } from '../../entities';
 import { Request } from 'express';
+import { parsePaging, parseOptionalPaging, wantsCount } from '@/common';
 
 @ApiTags('Categories')
 @Controller('categories')
@@ -60,9 +61,20 @@ export class CategoriesController {
   @ApiQuery({ name: 'take', required: false, type: Number })
   @ApiQuery({ name: 'storeId', required: true, type: String })
   @ApiResponse({ status: 200, description: 'List of categories' })
-  findAll(@Query('storeId') storeId?: string, @Query('skip') skip?: number, @Query('take') take?: number) {
+  findAll(
+    @Query('storeId') storeId?: string,
+    @Query('skip') skip?: string,
+    @Query('take') take?: string,
+    @Query('withCount') withCount?: string,
+  ) {
     if (!storeId) throw new BadRequestException('storeId query parameter is required');
-    return this.categoriesService.findAll(storeId, skip, take);
+
+    if (wantsCount(withCount)) {
+      const paging = parsePaging(skip, take);
+      return this.categoriesService.findAllPaged(storeId, paging.skip, paging.take);
+    }
+    const paging = parseOptionalPaging(skip, take);
+    return this.categoriesService.findAll(storeId, paging.skip, paging.take);
   }
 
   @Get(':id')

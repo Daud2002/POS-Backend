@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Product } from '../../entities';
 import { CreateProductDto, UpdateProductDto } from './dto/product.dto';
+import { toPage, type Page } from '../../common/pagination';
 
 @Injectable()
 export class ProductsService {
@@ -23,6 +24,18 @@ export class ProductsService {
       skip,
       take,
     });
+  }
+
+  /** Paged variant. `findAndCount` gives the total without a second query. */
+  async findAllPaged(storeId: string, skip: number, take: number): Promise<Page<Product>> {
+    const [items, total] = await this.productsRepository.findAndCount({
+      where: { storeId },
+      relations: ['category'],
+      order: { createdAt: 'DESC' },
+      skip,
+      take,
+    });
+    return toPage(items, total, skip, take);
   }
 
   async findOne(id: string, storeId?: string): Promise<Product> {

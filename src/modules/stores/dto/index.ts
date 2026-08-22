@@ -15,7 +15,18 @@ export class CreateStoreDto {
   @MinLength(6)
   password: string;
 
-  @ApiProperty({ example: 'Restaurant', required: false })
+  /**
+   * Selects the tenant's whole feature set. 'general' is the original
+   * behaviour and the default, so omitting it keeps existing callers working.
+   * Cannot be changed later — switching would strand tables and orders.
+   */
+  @ApiProperty({ example: 'general', enum: ['general', 'restaurant'], required: false })
+  @IsOptional()
+  @IsIn(['general', 'restaurant'])
+  accountType?: 'general' | 'restaurant';
+
+  /** @deprecated Cosmetic label superseded by `accountType`. No longer set by the UI. */
+  @ApiProperty({ example: 'Restaurant', required: false, deprecated: true })
   @IsOptional()
   @IsString()
   type?: string;

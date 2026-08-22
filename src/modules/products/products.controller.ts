@@ -19,6 +19,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Store, Employee } from '../../entities';
 import { Request } from 'express';
+import { parsePaging, parseOptionalPaging, wantsCount } from '@/common';
 
 @ApiTags('Products')
 @Controller('products')
@@ -60,9 +61,21 @@ export class ProductsController {
   @ApiQuery({ name: 'skip', required: false, type: Number })
   @ApiQuery({ name: 'take', required: false, type: Number })
   @ApiResponse({ status: 200, description: 'List of products' })
-  findAll(@Query('storeId') storeId?: string, @Query('skip') skip?: number, @Query('take') take?: number) {
+  findAll(
+    @Query('storeId') storeId?: string,
+    @Query('skip') skip?: string,
+    @Query('take') take?: string,
+    @Query('withCount') withCount?: string,
+  ) {
     if (!storeId) throw new BadRequestException('storeId query parameter is required');
-    return this.productsService.findAll(storeId, skip, take);
+
+    // Opt-in envelope so existing callers keep receiving a bare array.
+    if (wantsCount(withCount)) {
+      const paging = parsePaging(skip, take);
+      return this.productsService.findAllPaged(storeId, paging.skip, paging.take);
+    }
+    const paging = parseOptionalPaging(skip, take);
+    return this.productsService.findAll(storeId, paging.skip, paging.take);
   }
 
   @UseGuards(JwtAuthGuard)

@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Category } from '../../entities';
 import { CreateCategoryDto, UpdateCategoryDto } from './dto/category.dto';
+import { toPage, type Page } from '../../common/pagination';
 
 @Injectable()
 export class CategoriesService {
@@ -23,6 +24,17 @@ export class CategoriesService {
       skip,
       take,
     });
+  }
+
+  async findAllPaged(storeId: string, skip: number, take: number): Promise<Page<Category>> {
+    const [items, total] = await this.categoriesRepository.findAndCount({
+      where: { storeId },
+      relations: ['products'],
+      order: { createdAt: 'DESC' },
+      skip,
+      take,
+    });
+    return toPage(items, total, skip, take);
   }
 
   async findOne(id: string, storeId?: string): Promise<Category> {

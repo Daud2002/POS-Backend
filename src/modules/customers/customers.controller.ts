@@ -13,6 +13,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@ne
 import { CustomersService } from './customers.service';
 import { CreateCustomerDto, UpdateCustomerDto } from './dto/customer.dto';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
+import { parsePaging, parseOptionalPaging, wantsCount } from '@/common';
 
 @ApiTags('Customers')
 @Controller('customers')
@@ -31,8 +32,17 @@ export class CustomersController {
   @ApiOperation({ summary: 'Get all customers' })
   @ApiQuery({ name: 'skip', required: false })
   @ApiQuery({ name: 'take', required: false })
-  findAll(@Query('skip') skip?: number, @Query('take') take?: number) {
-    return this.customersService.findAll(skip, take);
+  findAll(
+    @Query('skip') skip?: string,
+    @Query('take') take?: string,
+    @Query('withCount') withCount?: string,
+  ) {
+    if (wantsCount(withCount)) {
+      const paging = parsePaging(skip, take);
+      return this.customersService.findAllPaged(paging.skip, paging.take);
+    }
+    const paging = parseOptionalPaging(skip, take);
+    return this.customersService.findAll(paging.skip, paging.take);
   }
 
   @Get(':id')

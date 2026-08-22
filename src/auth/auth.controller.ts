@@ -10,7 +10,7 @@ import {
 import { Request as ExpressRequest } from 'express';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
-import { ChangePasswordDto, LoginDto, RegisterDto, UserResponseDto } from './dto';
+import { ChangePasswordDto, LoginDto, RefreshTokenDto, RegisterDto, UserResponseDto } from './dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
 @ApiTags('Auth')
@@ -35,7 +35,7 @@ export class AuthController {
     }
   }})
   @ApiResponse({ status: 400, description: 'Invalid credentials' })
-  async login(@Body() loginDto: LoginDto) {
+  async login(@Body() loginDto: LoginDto, @Request() req: ExpressRequest) {
     const user = await this.authService.validateUser(
       loginDto.email,
       loginDto.password,
@@ -46,7 +46,25 @@ export class AuthController {
     if (!user.isActive) {
       throw new BadRequestException('Your account is inactive.');
     }
-    return this.authService.login(user);
+    return this.authService.login(user, req.headers['user-agent']);
+  }
+
+  @Post('refresh')
+  @ApiOperation({ summary: 'Exchange a refresh token for a new access token' })
+  @ApiResponse({
+    status: 201,
+    description: 'New token pair. The refresh token is rotated, so the caller must store the returned one.',
+  })
+  @ApiResponse({ status: 401, description: 'Invalid, expired, or already-used refresh token' })
+  async refresh(@Body() refreshDto: RefreshTokenDto, @Request() req: ExpressRequest) {
+    return this.authService.refresh(refreshDto.refreshToken, req.headers['user-agent']);
+  }
+
+  @Post('logout')
+  @ApiOperation({ summary: 'Revoke a refresh token and every token rotated from it' })
+  @ApiResponse({ status: 201, schema: { example: { message: 'Logged out successfully' } } })
+  async logout(@Body() refreshDto: RefreshTokenDto) {
+    return this.authService.logout(refreshDto?.refreshToken);
   }
 
   @Post('register')

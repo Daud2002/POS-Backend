@@ -1,4 +1,4 @@
-import { IsEmail, IsNotEmpty, MinLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class LoginDto {
@@ -25,6 +25,13 @@ export class RegisterDto {
   @ApiProperty({ example: 'John Doe', description: 'User full name' })
   @IsNotEmpty()
   name: string;
+}
+
+export class RefreshTokenDto {
+  @ApiProperty({ description: 'The opaque refresh token issued at login or by the previous refresh' })
+  @IsNotEmpty()
+  @IsString()
+  refreshToken: string;
 }
 
 export class ChangePasswordDto {
