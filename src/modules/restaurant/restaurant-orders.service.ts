@@ -8,7 +8,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
 import {
+  Customer,
   Order,
+  OrderEvent,
+  OrderEventLine,
+  OrderEventPayload,
+  OrderEventType,
   OrderItem,
   Product,
   RestaurantTable,
@@ -19,6 +24,7 @@ import {
   AddOrderItemsDto,
   CreateRestaurantOrderDto,
   PrintBillDto,
+  RemoveOrderItemsDto,
   RestaurantOrderItemDto,
   SettleOrderDto,
   UpdateDraftOrderDto,
@@ -26,28 +32,59 @@ import {
 } from './dto';
 import { TablesService } from './tables.service';
 import { ShiftsService } from '../shifts/shifts.service';
+import { CustomersService } from '../customers/customers.service';
+import { normalizePhone } from '../../common/phone';
 import { RealtimeGateway, RealtimeEvents } from '../../realtime/realtime.gateway';
 import { generateOrderNumber } from '../../common/order-number';
-import { resolveDiscount, round2 } from '../../common/discount';
+import { round2 } from '../../common/discount';
 import { toPage, type Page } from '../../common/pagination';
 import { categorySkipsKitchen, kitchenLines } from '../../common/kitchen-routing';
 import {
+  applyRemovals,
   assertCanActOnBill,
   BillViewer,
+  computeTotals,
   initialStatus,
   isOwnerRole,
+  mayPrintOnCreate,
   needsTable,
   resolveOrderType,
   resolvePayment,
+  shouldReleaseClaim,
+  statusAfterRemoval,
   statusAfterRound,
+  type ResolvedTotals,
 } from './order-rules';
 
 /**
  * Who is asking. Threaded through the reads so a cashier's list can exclude
  * bills another cashier has claimed, and through the writes so the claim can
- * be enforced. Owners see and may do everything.
+ * be enforced and the history can name them. Owners see and may do everything.
  */
 export type OrderViewer = BillViewer;
+
+/**
+ * A line as the history records it: plain numbers rather than the decimal
+ * strings TypeORM hands back, so the jsonb never holds `"500.00"`.
+ *
+ * `quantity` overrides the line's own count — an items_removed row records
+ * how many came OFF, which is not what the line still holds.
+ */
+function snapshotLine(line: Partial<OrderItem>, quantity?: number): OrderEventLine {
+  const qty = quantity ?? (Number(line.quantity) || 0);
+  const unitPrice = Number(line.unitPrice) || 0;
+  return {
+    orderItemId: line.id ?? null,
+    productId: line.productId ?? null,
+    productName: line.productName ?? null,
+    quantity: qty,
+    unitPrice,
+    total: quantity === undefined ? Number(line.total) || 0 : round2(unitPrice * qty),
+    isParcel: !!line.isParcel,
+    notes: line.notes ?? null,
+    skipKitchen: !!line.skipKitchen,
+  };
+}
 
 /**
  * Legal kitchen transitions.
@@ -62,6 +99,16 @@ const KITCHEN_TRANSITIONS: Record<string, RestaurantOrderStatus[]> = {
   requested: ['preparing', 'handed_over'],
   preparing: ['handed_over'],
 };
+
+/**
+ * History rows a SUPERVISOR's action does not write.
+ *
+ * Only the edits: a supervisor striking a line or adding a round is a
+ * correction, not something the owner audits. Placing an order and printing
+ * its bill are still recorded whoever did them, so every order keeps its
+ * first row and its print count.
+ */
+const SUPERVISOR_SILENT_EVENTS: OrderEventType[] = ['items_added', 'items_removed'];
 
 /**
  * Belt-and-braces translation of the double-booking invariant.
@@ -102,8 +149,11 @@ export class RestaurantOrdersService {
     private productsRepository: Repository<Product>,
     @InjectRepository(RestaurantTable)
     private tablesRepository: Repository<RestaurantTable>,
+    @InjectRepository(OrderEvent)
+    private eventsRepository: Repository<OrderEvent>,
     private tablesService: TablesService,
     private shiftsService: ShiftsService,
+    private customersService: CustomersService,
     private realtime: RealtimeGateway,
     private dataSource: DataSource,
   ) {}
@@ -304,6 +354,8 @@ export class RestaurantOrdersService {
       /** The bill has been printed and is waiting to be paid. */
       billPrinted: !!order.billPrintedAt,
       billPrintedByName: (order as any).billPrintedBy?.name ?? null,
+      /** Times the bill was printed AGAIN after the first. What the owner's list shows. */
+      reprintCount: Math.max((Number(order.billPrintCount) || 0) - 1, 0),
       /** How a partial payment was split; null for a single method. */
       paymentSplit:
         order.paymentMethod === 'partial'
@@ -319,7 +371,16 @@ export class RestaurantOrdersService {
 
   // --------------------------------------------------------------- writes
 
-  async create(storeId: string, userId: string, dto: CreateRestaurantOrderDto) {
+  /**
+   * Opens an order.
+   *
+   * A cashier punching a takeaway or delivery enters the discount and the
+   * delivery charge here, and asks for the bill to be printed in the same
+   * breath (`printBill`): the till prints from the response, so the paper
+   * matches what was stored, and the order is claimed for that cashier from
+   * the outset. A waiter's dine-in carries none of that and lands as before.
+   */
+  async create(storeId: string, actor: OrderViewer, dto: CreateRestaurantOrderDto) {
     if (needsTable(dto.orderType) && !dto.tableId) {
       throw new BadRequestException('A dine-in order needs a table');
     }
@@ -331,14 +392,30 @@ export class RestaurantOrdersService {
     }
 
     const isDraft = !!dto.isDraft;
+    // Printing claims the order for the printer, which only a cashier's
+    // (or owner's) till is equipped to honour. Refused up front rather than
+    // silently ignored, so a misconfigured client finds out.
+    const printNow = !!dto.printBill && !isDraft;
+    if (printNow && !mayPrintOnCreate(actor.role)) {
+      throw new BadRequestException('Only a cashier can print the bill while punching an order');
+    }
+
     const now = new Date();
     const lines = await this.buildItems(storeId, dto.items, isDraft ? null : now);
-    const subtotal = round2(lines.reduce((sum, l) => sum + Number(l.total), 0));
 
     // Derived, not trusted: a parcel on any line makes it a dine-out.
     const orderType = resolveOrderType(dto.orderType, lines);
     // A drinks-only order has nothing for the kitchen and opens ready to bill.
     const orderStatus: RestaurantOrderStatus = isDraft ? 'draft' : initialStatus(lines);
+
+    // Recomputed and clamped server-side — never trusted from the client.
+    const totals = computeTotals({
+      lines,
+      discountType: dto.discountType,
+      discountValue: dto.discountValue,
+      deliveryCharge: dto.deliveryCharge,
+      orderType,
+    });
 
     // The id is generated up-front so the table can be claimed BEFORE the
     // order is inserted. Claiming afterwards let the partial unique index on
@@ -366,29 +443,67 @@ export class RestaurantOrdersService {
 
       const orderSequence = await this.nextOrderSequence(manager, storeId);
 
+      /**
+       * A delivery with a phone number files the customer — or finds them,
+       * untouched, if that phone is already in the book. Drafts included:
+       * the customer fields cannot be edited after the draft is made, so
+       * this is the only moment they are known. In the same transaction, so
+       * an order never points at a customer that was rolled back.
+       */
+      const customer =
+        orderType === 'delivery'
+          ? await this.customersService.findOrCreateFromOrder(manager, storeId, {
+              name: dto.customerName,
+              phone: dto.customerPhone,
+              address: dto.deliveryAddress,
+            })
+          : null;
+
       const order = manager.create(Order, {
         id: orderId,
         storeId,
         orderNumber: generateOrderNumber(),
         orderSequence,
-        createdById: userId,
+        createdById: actor.userId,
         orderType,
         orderStatus,
         // 'draft' is not a member of the payment enum; a draft is simply unpaid.
         status: 'unpaid',
         tableId: needsTable(orderType) ? dto.tableId : null,
+        customerId: customer?.id ?? null,
         customerName: dto.customerName ?? null,
-        customerPhone: dto.customerPhone ?? null,
+        // Stored the way the directory stores it, so a search by phone on
+        // the orders list matches whichever way it was typed.
+        customerPhone: normalizePhone(dto.customerPhone) || dto.customerPhone?.trim() || null,
         deliveryAddress: dto.deliveryAddress ?? null,
         notes: dto.notes ?? null,
-        subtotal,
         tax: 0,
-        discount: 0,
-        total: subtotal,
+        ...totals,
+        ...(printNow
+          ? { billPrintedById: actor.userId, billPrintedAt: now, billPrintCount: 1 }
+          : {}),
         items: lines.map((l) => manager.create(OrderItem, l)),
       });
 
-      return manager.save(order);
+      const inserted = await manager.save(order);
+
+      // A draft is scratch and earns no history; it is logged when punched.
+      if (!isDraft) {
+        await this.logEvent(manager, inserted, 'placed', actor, {
+          lines: (inserted.items ?? []).map((l) => snapshotLine(l)),
+          totals,
+        }, now);
+        if (printNow) {
+          await this.logEvent(manager, inserted, 'bill_printed', actor, {
+            lines: [],
+            totals,
+            reprint: false,
+            printNumber: 1,
+          }, new Date(now.getTime() + 1));
+        }
+      }
+
+      return inserted;
     }).catch(rethrowTableConflict);
 
     const order = await this.findOne(saved.id, storeId);
@@ -419,7 +534,15 @@ export class RestaurantOrdersService {
     }
 
     const lines = await this.buildItems(storeId, dto.items, null);
-    const subtotal = round2(lines.reduce((sum, l) => sum + Number(l.total), 0));
+    // The parcel marks may have changed, and with them dine-in/dine-out.
+    const orderType = resolveOrderType(existing.orderType, lines);
+    const totals = computeTotals({
+      lines,
+      discountType: existing.discountType,
+      discountValue: existing.discountValue,
+      deliveryCharge: existing.deliveryCharge,
+      orderType,
+    });
 
     await this.dataSource.transaction(async (manager) => {
       await manager.delete(OrderItem, { orderId: id });
@@ -429,10 +552,8 @@ export class RestaurantOrdersService {
       await manager.update(Order, id, {
         tableId: dto.tableId ?? existing.tableId,
         notes: dto.notes ?? existing.notes,
-        // The parcel marks may have changed, and with them dine-in/dine-out.
-        orderType: resolveOrderType(existing.orderType, lines),
-        subtotal,
-        total: subtotal,
+        orderType,
+        ...totals,
       });
     });
 
@@ -477,7 +598,7 @@ export class RestaurantOrdersService {
    * On a lost race the draft is preserved exactly as it was so the waiter can
    * retry against a different table — never silently discarded.
    */
-  async punchDraft(id: string, storeId: string, tableId?: string) {
+  async punchDraft(id: string, storeId: string, tableId: string | undefined, actor: OrderViewer) {
     const existing = await this.ordersRepository.findOne({
       where: { id, storeId },
       relations: ['items'],
@@ -493,6 +614,7 @@ export class RestaurantOrdersService {
     }
 
     const lines = existing.items ?? [];
+    const now = new Date();
 
     await this.dataSource.transaction(async (manager) => {
       if (needsTable(existing.orderType)) {
@@ -511,7 +633,14 @@ export class RestaurantOrdersService {
         tableId: needsTable(existing.orderType) ? targetTable : null,
       });
       // Stamp the round so the kitchen ticket knows which lines are new.
-      await manager.update(OrderItem, { orderId: id }, { sentAt: new Date() });
+      await manager.update(OrderItem, { orderId: id }, { sentAt: now });
+
+      // This is the moment the draft becomes an order, so THIS is its
+      // "original order" in the history — not the draft's first save.
+      await this.logEvent(manager, existing, 'placed', actor, {
+        lines: lines.map((l) => snapshotLine(l)),
+        totals: this.totalsOf(existing),
+      }, now);
     }).catch(rethrowTableConflict);
 
     const order = await this.findOne(id, storeId);
@@ -530,7 +659,7 @@ export class RestaurantOrdersService {
    * carries only the cookable lines, and a round made of nothing else raises
    * no ticket at all.
    */
-  async addItems(id: string, storeId: string, dto: AddOrderItemsDto) {
+  async addItems(id: string, storeId: string, dto: AddOrderItemsDto, viewer: OrderViewer) {
     const existing = await this.ordersRepository.findOne({ where: { id, storeId } });
     if (!existing) throw new NotFoundException('Order not found');
     if (!LIVE_ORDER_STATUSES.includes(existing.orderStatus)) {
@@ -554,37 +683,42 @@ export class RestaurantOrdersService {
     const reopensKitchen = nextStatus !== existing.orderStatus;
 
     /**
-     * A printed bill no longer matches the order, so the claim is released:
-     * the order goes back in front of every cashier and whoever bills it next
-     * prints a fresh one. The discount fixed at print time goes with it.
+     * A printed bill no longer matches the order. When a WAITER added the
+     * round the claim is released — they cannot reprint, so the order goes
+     * back in front of every cashier. The claiming cashier (or an owner)
+     * reprints as part of the same edit and keeps the claim. Either way the
+     * discount survives: it is re-resolved against the new subtotal below.
      */
-    const billWasPrinted = !!existing.billPrintedAt;
+    const releaseClaim = shouldReleaseClaim(existing, viewer);
 
+    let totals: ResolvedTotals | undefined;
     await this.dataSource.transaction(async (manager) => {
-      await manager.save(
+      const saved = await manager.save(
         manager.create(OrderItem, lines.map((l) => ({ ...l, orderId: id }))) as OrderItem[],
       );
 
       const all = await manager.find(OrderItem, { where: { orderId: id } });
-      const subtotal = round2(all.reduce((sum, l) => sum + Number(l.total), 0));
-      const discount = billWasPrinted ? 0 : Number(existing.discount) || 0;
+      // A parcel in this round can turn a dine-in into a dine-out.
+      const orderType = resolveOrderType(existing.orderType, all);
+      totals = computeTotals({
+        lines: all,
+        discountType: existing.discountType,
+        discountValue: existing.discountValue,
+        deliveryCharge: existing.deliveryCharge,
+        orderType,
+      });
 
       await manager.update(Order, id, {
-        subtotal,
-        total: round2(Math.max(subtotal - discount, 0)),
-        // A parcel in this round can turn a dine-in into a dine-out.
-        orderType: resolveOrderType(existing.orderType, all),
+        ...totals,
+        orderType,
         ...(reopensKitchen ? { orderStatus: nextStatus } : {}),
-        ...(billWasPrinted
-          ? {
-              billPrintedById: null,
-              billPrintedAt: null,
-              discount: 0,
-              discountType: null,
-              discountValue: null,
-            }
-          : {}),
+        ...(releaseClaim ? { billPrintedById: null, billPrintedAt: null } : {}),
       });
+
+      await this.logEvent(manager, existing, 'items_added', viewer, {
+        lines: saved.map((l) => snapshotLine(l)),
+        totals,
+      }, sentAt);
     });
 
     const order = await this.findOne(id, storeId);
@@ -604,6 +738,80 @@ export class RestaurantOrdersService {
     }
     // Totals, type, status and the bill claim may all have moved, so every
     // screen that lists this order re-places it.
+    this.realtime.emitToStore(storeId, RealtimeEvents.orderUpdated, order);
+    return order;
+  }
+
+  /**
+   * Takes lines off a live order — the cashier striking a dish the customer
+   * changed their mind about, or one the kitchen ran out of.
+   *
+   * Only the cashier holding the bill (or an owner) may; a second till cannot
+   * shorten an order the first is collecting for. The kitchen hears about it
+   * only when it matters: lines it was still cooking raise a cancellation
+   * ticket, lines already handed over do not — the food is on the counter
+   * whatever the paper now says.
+   */
+  async removeItems(id: string, storeId: string, dto: RemoveOrderItemsDto, viewer: OrderViewer) {
+    const existing = await this.loadForBilling(id, storeId);
+    if (existing.orderStatus === 'draft') {
+      throw new ConflictException('This is still a draft — edit the draft instead');
+    }
+    if (!LIVE_ORDER_STATUSES.includes(existing.orderStatus)) {
+      throw new ConflictException('This order is no longer open');
+    }
+    assertCanActOnBill(existing, viewer);
+
+    const plan = applyRemovals(existing.items ?? [], dto.items ?? []);
+    const statusBefore = existing.orderStatus;
+    const now = new Date();
+
+    // Dropping the only parcel line turns a dine-out back into a dine-in; the
+    // table is kept either way. Removing the last thing the kitchen was
+    // cooking leaves nothing on its ticket, so the order is ready to bill.
+    const orderType = resolveOrderType(existing.orderType, plan.remaining);
+    const orderStatus = statusAfterRemoval(statusBefore, plan.remaining);
+    const totals = computeTotals({
+      lines: plan.remaining,
+      discountType: existing.discountType,
+      discountValue: existing.discountValue,
+      deliveryCharge: existing.deliveryCharge,
+      orderType,
+    });
+
+    await this.dataSource.transaction(async (manager) => {
+      if (plan.deletedIds.length) {
+        await manager.delete(OrderItem, { id: In(plan.deletedIds) });
+      }
+      for (const reduced of plan.reducedLines) {
+        await manager.update(OrderItem, reduced.id, {
+          quantity: reduced.quantity,
+          subtotal: reduced.subtotal,
+          total: reduced.total,
+        });
+      }
+      await manager.update(Order, id, { ...totals, orderType, orderStatus });
+
+      await this.logEvent(manager, existing, 'items_removed', viewer, {
+        lines: plan.removed.map((r) => snapshotLine(r.line, r.quantity)),
+        totals,
+        orderStatusAfter: orderStatus,
+      }, now);
+    });
+
+    const order = await this.findOne(id, storeId);
+
+    // The kitchen only needs telling about dishes it had not yet finished.
+    const stillCooking = statusBefore === 'requested' || statusBefore === 'preparing';
+    const cancelledKitchenLines = plan.removed
+      .filter((r) => !r.line.skipKitchen)
+      .map((r) => ({ ...r.line, quantity: r.quantity }));
+    if (stillCooking && cancelledKitchenLines.length) {
+      this.realtime.emitToStore(storeId, RealtimeEvents.orderItemsRemoved, {
+        order,
+        removedItems: cancelledKitchenLines,
+      });
+    }
     this.realtime.emitToStore(storeId, RealtimeEvents.orderUpdated, order);
     return order;
   }
@@ -649,14 +857,18 @@ export class RestaurantOrdersService {
   }
 
   /**
-   * Cashier prints the bill: fixes the discount, records who printed it and
-   * when, and — on a delivery — who is carrying it. Nothing is paid yet and
+   * Cashier prints the bill: fixes the discount and delivery charge, records
+   * who printed it and when, and counts the print. Nothing is paid yet and
    * the table stays taken; that is settle()'s job.
    *
    * Allowed from any live kitchen status, because a takeaway or delivery is
    * billed the moment it is ordered, long before the kitchen is done. The
    * first cashier to print claims the order (see order-rules.ts); printing
-   * again is a reprint, which is how the discount gets changed.
+   * again is a reprint — after an item change, or for a lost slip.
+   *
+   * The money fields follow "absent = keep, null = clear", so a bare `{}`
+   * from an older client is a plain reprint and never wipes a discount the
+   * order was punched with.
    */
   async printBill(id: string, storeId: string, dto: PrintBillDto, viewer: OrderViewer) {
     const existing = await this.loadForBilling(id, storeId);
@@ -672,27 +884,34 @@ export class RestaurantOrdersService {
     }
     assertCanActOnBill(existing, viewer);
 
-    const riderName = dto.riderName?.trim() || existing.riderName || null;
-    if (existing.orderType === 'delivery' && !riderName) {
-      throw new BadRequestException("A delivery bill needs the rider's name");
-    }
-
-    const subtotal = round2(
-      (existing.items ?? []).reduce((sum, l) => sum + Number(l.total), 0),
-    );
     // Recomputed and clamped server-side — never trusted from the client.
-    const { discount, discountType, discountValue } = resolveDiscount(dto, subtotal);
-    const total = round2(Math.max(subtotal - discount, 0));
+    const sentDiscount = dto.discountType !== undefined || dto.discountValue !== undefined;
+    const totals = computeTotals({
+      lines: existing.items ?? [],
+      discountType: sentDiscount ? dto.discountType : existing.discountType,
+      discountValue: sentDiscount ? dto.discountValue : existing.discountValue,
+      deliveryCharge: dto.deliveryCharge === undefined ? existing.deliveryCharge : dto.deliveryCharge,
+      orderType: existing.orderType,
+    });
 
-    await this.ordersRepository.update(id, {
-      subtotal,
-      discount,
-      discountType,
-      discountValue,
-      total,
-      riderName: existing.orderType === 'delivery' ? riderName : existing.riderName ?? null,
-      billPrintedById: viewer.userId,
-      billPrintedAt: new Date(),
+    const printNumber = (Number(existing.billPrintCount) || 0) + 1;
+    const now = new Date();
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.update(Order, id, {
+        ...totals,
+        // Legacy field: stored if an old till still sends it, never required.
+        riderName: dto.riderName?.trim() || existing.riderName || null,
+        billPrintedById: viewer.userId,
+        billPrintedAt: now,
+        billPrintCount: printNumber,
+      });
+      await this.logEvent(manager, existing, 'bill_printed', viewer, {
+        lines: [],
+        totals,
+        reprint: printNumber > 1,
+        printNumber,
+      }, now);
     });
 
     const order = await this.findOne(id, storeId);
@@ -731,23 +950,19 @@ export class RestaurantOrdersService {
     }
     assertCanActOnBill(existing, viewer);
 
-    const subtotal = round2(
-      (existing.items ?? []).reduce((sum, l) => sum + Number(l.total), 0),
-    );
-
     // The printed figure, unless an older one-step client sent its own.
     const sentDiscount = dto.discountType !== undefined || dto.discountValue !== undefined;
-    const { discount, discountType, discountValue } = resolveDiscount(
-      sentDiscount
-        ? dto
-        : { discountType: existing.discountType, discountValue: existing.discountValue },
-      subtotal,
-    );
-    const total = round2(Math.max(subtotal - discount, 0));
+    const totals = computeTotals({
+      lines: existing.items ?? [],
+      discountType: sentDiscount ? dto.discountType : existing.discountType,
+      discountValue: sentDiscount ? dto.discountValue : existing.discountValue,
+      deliveryCharge: existing.deliveryCharge,
+      orderType: existing.orderType,
+    });
 
     // Validated BEFORE the transaction: a split that does not balance is the
     // cashier's typo, and must not cost a shift-row lock to find out.
-    const payment = resolvePayment(dto.paymentMethod, dto.split, total);
+    const payment = resolvePayment(dto.paymentMethod, dto.split, totals.total);
 
     // Tenants with shifts switched on require an open drawer; the rest simply
     // record who settled, so turning the flag on later has history to show.
@@ -768,13 +983,21 @@ export class RestaurantOrdersService {
         orderStatus: 'completed',
         status: 'paid',
         ...payment,
-        subtotal,
-        discount,
-        discountType,
-        discountValue,
-        total,
+        ...totals,
         ...stamp,
       });
+
+      // The customer's running total, for the directory. An atomic increment
+      // rather than read-modify-write: two tills can settle for the same
+      // regular at once.
+      if (existing.customerId) {
+        await manager.increment(
+          Customer,
+          { id: existing.customerId },
+          'totalSpent',
+          totals.total,
+        );
+      }
 
       if (existing.tableId) {
         await this.tablesService.release(manager, existing.tableId, storeId);
@@ -811,7 +1034,84 @@ export class RestaurantOrdersService {
     return order;
   }
 
+  /**
+   * Everything that happened to an order, oldest first: the original lines,
+   * each round added or struck off (and by whom), and every print of the
+   * bill. Tenancy is checked through findOne() so one restaurant can never
+   * read another's trail by guessing an id.
+   */
+  async history(id: string, storeId: string, viewer?: OrderViewer) {
+    await this.findOne(id, storeId, viewer);
+    const events = await this.eventsRepository.find({
+      where: { orderId: id, storeId },
+      order: { createdAt: 'ASC', id: 'ASC' },
+    });
+    return {
+      orderId: id,
+      events: events.map((e) => ({
+        id: e.id,
+        type: e.type,
+        actorId: e.actorId ?? null,
+        actorName: e.actorName ?? null,
+        actorRole: e.actorRole ?? null,
+        createdAt: e.createdAt,
+        payload: e.payload,
+      })),
+    };
+  }
+
   // --------------------------------------------------------------- helpers
+
+  /**
+   * Appends one row to the order's history, inside the caller's transaction
+   * so a change and its record can never disagree. `at` is set explicitly:
+   * Postgres's `now()` is the transaction START, so two rows written in one
+   * transaction would otherwise tie on createdAt and sort at random.
+   */
+  private async logEvent(
+    manager: EntityManager,
+    order: { id: string; storeId: string },
+    type: OrderEventType,
+    actor: OrderViewer | null | undefined,
+    payload: OrderEventPayload,
+    at: Date,
+  ): Promise<void> {
+    /**
+     * A supervisor's corrections are not history. Product decision: the
+     * supervisor is the owner's stand-in, and when they strike a line or add
+     * one it is a fix, not a change the owner needs to audit. The order itself
+     * still records that it was placed and printed, whoever did it.
+     */
+    if (actor?.role === 'supervisor' && SUPERVISOR_SILENT_EVENTS.includes(type)) {
+      return;
+    }
+
+    await manager.insert(OrderEvent, {
+      orderId: order.id,
+      storeId: order.storeId,
+      type,
+      actorId: actor?.userId ?? null,
+      actorName: actor?.name ?? null,
+      actorRole: actor?.role ?? null,
+      payload,
+      createdAt: at,
+    });
+  }
+
+  /** The money already on an order row, as numbers, for a history snapshot. */
+  private totalsOf(order: Order): ResolvedTotals {
+    return {
+      subtotal: Number(order.subtotal) || 0,
+      discount: Number(order.discount) || 0,
+      discountType: order.discountType ?? null,
+      discountValue:
+        order.discountValue === null || order.discountValue === undefined
+          ? null
+          : Number(order.discountValue),
+      deliveryCharge: Number(order.deliveryCharge) || 0,
+      total: Number(order.total) || 0,
+    };
+  }
 
   /**
    * The order with its lines and the cashier who printed its bill — enough to

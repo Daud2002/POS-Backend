@@ -262,11 +262,40 @@ Authorization: Bearer <token>
 
 ### Customers
 
+Every customer belongs to one store (`storeId`), and every route below is
+scoped to the caller's store — a restaurant's delivery book never shows up in
+another tenant's list. All routes need a login. Listing, creating and the live
+suggestions are open to anyone who works a till (`pos` on a general store,
+`cashier` on a restaurant); editing, deleting and a customer's order history
+need the `customers` module.
+
+**Phone is the identity** of a customer within a store. It is stored
+normalised (digits, plus a leading `+`), so `0300-1234567`, `0300 1234567`
+and `03001234567` are one customer; a second row with the same phone is
+refused with `409`.
+
+A **restaurant delivery order** with a phone files its customer here
+automatically (or links to the existing one, which is left untouched) and
+sets `customerId` on the order; settling the order adds to `totalSpent`.
+
 #### List All Customers
 
 ```http
-GET /customers?skip=0&take=10
+GET /customers?skip=0&take=10&search=sana
 ```
+
+`search` matches name, email, phone (however it was typed), address and city.
+Add `withCount=true` for the paged envelope.
+
+#### Live suggestions for the order screen
+
+```http
+GET /customers/suggest?q=san&limit=8
+```
+
+At least two characters. Returns up to `limit` (max 20) lean rows —
+`{ id, name, phone, address, city }` — matching name, phone or address,
+most recently updated first. Meant to be called on every pause in typing.
 
 **Response:**
 
@@ -332,6 +361,51 @@ Content-Type: application/json
 DELETE /customers/:id
 Authorization: Bearer <token>
 ```
+
+Past orders keep the name, phone and address they were placed with; only the
+link (`customerId`) is cleared.
+
+---
+
+### Reports
+
+#### Profit
+
+```http
+GET /reports/profit?tz=Asia/Karachi
+Authorization: Bearer <token>
+```
+
+Gross and net profit for both account types, gated on the `dashboard` module.
+`tz` is the caller's IANA zone; every window starts at local midnight there
+(an unknown zone falls back to UTC, echoed in `tz`).
+
+```json
+{
+  "tz": "Asia/Karachi",
+  "periods": {
+    "today":       { "orderCount": 4, "revenue": 2350, "cost": 2300, "grossProfit": 50, "unknownCostLineCount": 0, "expenses": 100, "netProfit": -50 },
+    "thisMonth":   { "...": "..." },
+    "last3Months": { "...": "..." },
+    "last6Months": { "...": "..." },
+    "thisYear":    { "...": "..." },
+    "allTime":     { "...": "..." }
+  }
+}
+```
+
+- `revenue` is what the goods sold for (delivery charges excluded), counting
+  settled orders only — `orderStatus = 'completed'` on a restaurant,
+  `status IN ('paid','completed')` on a general store — windowed on when the
+  money was taken.
+- `cost` is Σ `unitCost × quantity` from the cost snapshot on each line sold;
+  `unknownCostLineCount` says how many lines had no cost recorded.
+- `grossProfit = revenue − cost`; `netProfit = grossProfit − expenses`, where
+  `expenses` is the ledger for the same window (by `expenseDate`).
+- `expenses` and `netProfit` are `null` when the caller does not hold the
+  `expenses` module.
+- "Past 3 / 6 months" run from the same day-of-month 3 / 6 calendar months
+  back (clamped to the shorter month).
 
 ---
 
@@ -452,6 +526,31 @@ Authorization: Bearer <token>
 
 ---
 
+### Restaurant staff roles
+
+A restaurant employee's `designation` must be one of `waiter`, `kitchen`,
+`cashier` or `supervisor`; it decides their effective role and their base
+module. The owner may grant extra modules per person via
+`PATCH /employees/:id/permissions`; `GET /employees/:id/permissions` returns
+what may be ticked (`grantable`) so clients never hard-code the rules.
+
+| Designation | Base module | May additionally be granted |
+|---|---|---|
+| `waiter` | `tables` | `expenses` |
+| `kitchen` | `kitchen` | `expenses` |
+| `cashier` | `cashier` | `expenses`, `tables`, `categories`, `products`, `orders`, `customers` |
+| `supervisor` | `cashier` (+ `expenses` from creation) | everything the owner has: `dashboard`, `expenses`, `kitchen`, `tables`, `products`, `categories`, `orders`, `customers`, `shifts` |
+
+A **supervisor** is the owner's stand-in on the floor. They work the till
+like a cashier, may print, settle or cancel a bill another cashier has
+claimed, and once granted a module reach the owner-only routes behind it
+(table management → `tables`, kitchen status → `kitchen`, the sales and
+profit reports → `dashboard`, expense categories → `expenses`, every
+cashier's drawer → `shifts`). Staff management (`/employees/*`) is never
+delegated. A supervisor's line edits (`items_added`, `items_removed`) write
+**no** history row; their `placed` and `bill_printed` rows are recorded as
+for anyone else.
+
 ### Cashier Shifts
 
 A **shift** is one cashier's window of accountability over a cash drawer. Every
@@ -475,6 +574,9 @@ nobody is blocked for lacking a drawer.
 | GET | `/shifts/:id` | own cashier, or owner | Shift, totals, **and the orders settled in it** |
 | GET | `/shifts/me/dashboard` | cashier | `?from&to` — what this cashier collected, by payment method |
 | GET | `/shifts/summary/by-cashier` | owner | `?from&to` — one row per cashier: takings, variance, still to collect |
+
+"owner" in the table means anyone holding the `shifts` module: every owner
+does, and a supervisor may be granted it.
 
 **Reconciliation.** Only cash passes through the drawer:
 
@@ -551,8 +653,29 @@ to the customer first, the money is booked when it arrives:
 
 | Method | Endpoint | Who | Notes |
 |---|---|---|---|
-| POST | `/restaurant/orders/:id/print-bill` | cashier, owner | `{ discountType?, discountValue?, riderName? }`. Fixes the discount, stamps `billPrintedById`/`billPrintedAt`, and **claims** the order for the caller. `riderName` is required on a delivery (**400**) and printed on the bill. Calling again is a reprint — the only way to change the discount |
+| POST | `/restaurant/orders/:id/print-bill` | cashier, owner | `{ discountType?, discountValue?, deliveryCharge? }`. Fixes the money, stamps `billPrintedById`/`billPrintedAt`, increments `billPrintCount`, and **claims** the order for the caller. Every field is *absent = keep what is stored, null = clear it*, so a bare `{}` is a plain reprint that never wipes a punch-time discount. `riderName` is accepted and ignored (legacy) |
 | POST | `/restaurant/orders/:id/settle` | cashier, owner | `{ paymentMethod?, split? }`. **409** until the bill is printed. Charges the printed figure (older clients may still send discount fields). Completes the order, frees the table, stamps the shift |
+
+**Billed as it is punched.** A cashier's takeaway or delivery is created with
+its money already on it: `POST /restaurant/orders` accepts `discountType`,
+`discountValue`, `deliveryCharge` (delivery only — stored as 0 on anything
+else) and `printBill: true`, which records the bill as printed and claims the
+order in the same transaction so the till prints from the response. Only a
+cashier or owner may send `printBill` (**400** otherwise — a waiter holding a
+claim would lock every till out). `total = max(subtotal − discount, 0) +
+deliveryCharge`, and a percentage discount is re-resolved against the current
+subtotal on every change.
+
+### Editing a live order
+
+| Method | Endpoint | Who | Notes |
+|---|---|---|---|
+| POST | `/restaurant/orders/:id/items` | waiter, cashier, owner | Append a round. The kitchen gets a ticket with only the new lines |
+| POST | `/restaurant/orders/:id/items/remove` | cashier, owner | `{ items: [{ orderItemId, quantity? }] }`. Strikes lines (or part of a line) off. **400** unknown line / more than held; **409** draft, closed, or nothing would remain (cancel instead); **403** under another cashier's claim. Emits `order:items_removed { order, removedItems }` only for lines the kitchen was still cooking, so it can print a cancellation ticket; removing the last kitchen line moves a `requested`/`preparing` order to `handed_over` |
+| GET | `/restaurant/orders/:id/history` | owner, cashier | `{ orderId, events: [{ type, actorName, actorRole, createdAt, payload }] }`, oldest first. `type` is `placed` (the original lines), `items_added`, `items_removed` (lines carry the quantity removed) or `bill_printed` (`payload.reprint`, `payload.printNumber`). Every row snapshots the totals after it |
+
+Responses carry `deliveryCharge`, `billPrintCount` and `reprintCount`
+(`billPrintCount − 1`, what the owner's list flags).
 
 **Split payments.** `paymentMethod: 'partial'` with
 `split: { cash?, card?, online? }` records a customer paying by more than one
@@ -569,11 +692,13 @@ per-method figure at the end of the shift.
 printed, `GET /restaurant/orders` for a *cashier* omits it unless they printed
 it (`billPrintedById IS NULL OR = caller`), and reprint/settle/cancel by another
 cashier return **403** naming who holds it. Owners always see and may act on
-everything. A waiter adding a round to a printed bill clears the claim and the
-discount, and the order goes back in front of every cashier to be printed again.
+everything. A *waiter* adding a round to a printed bill clears the claim (they
+cannot reprint), and the order goes back in front of every cashier to be
+printed again; the discount stays and is re-resolved. The claiming cashier or
+an owner editing the order keeps the claim and reprints themselves.
 
-Responses carry `billPrinted`, `billPrintedByName`, `billPrintedAt` and
-`riderName`. `GET /restaurant/orders` also accepts `billPrinted=true|false`.
+Responses carry `billPrinted`, `billPrintedByName` and `billPrintedAt`.
+`GET /restaurant/orders` also accepts `billPrinted=true|false`.
 "Bill printed" is a display state on the clients, not a member of
 `orderStatus` — the kitchen lifecycle is untouched by billing.
 

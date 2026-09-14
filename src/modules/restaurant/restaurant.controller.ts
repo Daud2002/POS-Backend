@@ -11,7 +11,16 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
-import { Roles, RolesGuard, CurrentUser, TenantService, parsePaging, wantsCount } from '@/common';
+import {
+  Roles,
+  RolesGuard,
+  PermissionsGuard,
+  RequirePermissions,
+  CurrentUser,
+  TenantService,
+  parsePaging,
+  wantsCount,
+} from '@/common';
 import { TablesService } from './tables.service';
 import { RestaurantOrdersService, type OrderViewer } from './restaurant-orders.service';
 import { RestaurantReportsService } from './restaurant-reports.service';
@@ -20,24 +29,38 @@ import {
   CreateRestaurantOrderDto,
   CreateTableDto,
   PrintBillDto,
+  RemoveOrderItemsDto,
   SettleOrderDto,
   UpdateDraftOrderDto,
   UpdateOrderStatusDto,
   UpdateTableDto,
 } from './dto';
 
-/** Who is asking, as the orders service needs it: id plus effective role. */
-const viewerOf = (user: any): OrderViewer => ({ userId: user.id, role: user.effectiveRole });
+/**
+ * Who is asking, as the orders service needs it: id, effective role, and the
+ * display name that gets snapshotted onto the order's history.
+ */
+const viewerOf = (user: any): OrderViewer => ({
+  userId: user.id,
+  role: user.effectiveRole,
+  name: user.name ?? null,
+});
 
 /**
  * Every route is gated twice: RolesGuard checks the effective role, and
  * `requireRestaurantStore` rejects a general tenant outright, so these
  * endpoints cannot be used to mutate a general store's data.
+ *
+ * A third gate applies to what used to be owner-only: a supervisor reaches
+ * those routes only when the owner has ticked the matching module for them
+ * (`@RequirePermissions`), which PermissionsGuard checks. Cashiers, waiters
+ * and kitchen staff are never offered those modules, so listing 'supervisor'
+ * in @Roles is what opens the door, and the module is what decides.
  */
 @ApiTags('Restaurant')
 @ApiBearerAuth()
 @Controller('restaurant')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
 export class RestaurantController {
   constructor(
     private tablesService: TablesService,
@@ -49,7 +72,7 @@ export class RestaurantController {
   // ------------------------------------------------------------- tables
 
   @Get('tables')
-  @Roles('restaurant_owner', 'waiter', 'kitchen', 'cashier')
+  @Roles('restaurant_owner', 'waiter', 'kitchen', 'cashier', 'supervisor')
   @ApiOperation({ summary: 'List tables with their live status' })
   async listTables(@CurrentUser() user: any, @Query('includeInactive') includeInactive?: string) {
     const store = await this.tenantService.requireRestaurantStore(user);
@@ -57,7 +80,8 @@ export class RestaurantController {
   }
 
   @Post('tables')
-  @Roles('restaurant_owner')
+  @Roles('restaurant_owner', 'supervisor')
+  @RequirePermissions('tables')
   @ApiOperation({ summary: 'Add a table' })
   @ApiResponse({ status: 409, description: 'A table with that name already exists' })
   async createTable(@CurrentUser() user: any, @Body() dto: CreateTableDto) {
@@ -66,7 +90,8 @@ export class RestaurantController {
   }
 
   @Patch('tables/:id')
-  @Roles('restaurant_owner')
+  @Roles('restaurant_owner', 'supervisor')
+  @RequirePermissions('tables')
   @ApiOperation({ summary: 'Rename or reactivate a table' })
   async updateTable(@CurrentUser() user: any, @Param('id') id: string, @Body() dto: UpdateTableDto) {
     const store = await this.tenantService.requireRestaurantStore(user);
@@ -74,7 +99,8 @@ export class RestaurantController {
   }
 
   @Delete('tables/:id')
-  @Roles('restaurant_owner')
+  @Roles('restaurant_owner', 'supervisor')
+  @RequirePermissions('tables')
   @ApiOperation({ summary: 'Remove a table (soft delete)' })
   async removeTable(@CurrentUser() user: any, @Param('id') id: string) {
     const store = await this.tenantService.requireRestaurantStore(user);
@@ -89,7 +115,7 @@ export class RestaurantController {
    * everything their filters ask for.
    */
   @Get('orders')
-  @Roles('restaurant_owner', 'waiter', 'kitchen', 'cashier')
+  @Roles('restaurant_owner', 'waiter', 'kitchen', 'cashier', 'supervisor')
   @ApiOperation({ summary: 'List restaurant orders' })
   async listOrders(
     @CurrentUser() user: any,
@@ -116,25 +142,44 @@ export class RestaurantController {
   }
 
   @Get('orders/:id')
-  @Roles('restaurant_owner', 'waiter', 'kitchen', 'cashier')
+  @Roles('restaurant_owner', 'waiter', 'kitchen', 'cashier', 'supervisor')
   @ApiOperation({ summary: 'Get one restaurant order' })
   async getOrder(@CurrentUser() user: any, @Param('id') id: string) {
     const store = await this.tenantService.requireRestaurantStore(user);
     return this.ordersService.findOne(id, store.id, viewerOf(user));
   }
 
-  /** Waiters punch dine-in and dine-out; cashiers take takeaway and delivery. */
+  /**
+   * The order's audit trail. Owners read it from the Orders page; a cashier
+   * may read it too, so the till can show what was changed before reprinting.
+   */
+  @Get('orders/:id/history')
+  @Roles('restaurant_owner', 'cashier', 'supervisor')
+  @ApiOperation({
+    summary: 'Original lines, every add/remove with who did it, and every bill print',
+  })
+  async orderHistory(@CurrentUser() user: any, @Param('id') id: string) {
+    const store = await this.tenantService.requireRestaurantStore(user);
+    return this.ordersService.history(id, store.id, viewerOf(user));
+  }
+
+  /**
+   * Waiters punch dine-in and dine-out; cashiers take takeaway and delivery —
+   * with the discount and delivery charge entered up front and the bill
+   * printed as the order is sent (`printBill`).
+   */
   @Post('orders')
-  @Roles('waiter', 'cashier', 'restaurant_owner')
+  @Roles('waiter', 'cashier', 'supervisor', 'restaurant_owner')
   @ApiOperation({ summary: 'Create an order, as a draft or sent to the kitchen' })
+  @ApiResponse({ status: 400, description: 'printBill was sent by a role that cannot claim a bill' })
   @ApiResponse({ status: 409, description: 'The table was claimed by another order' })
   async createOrder(@CurrentUser() user: any, @Body() dto: CreateRestaurantOrderDto) {
     const store = await this.tenantService.requireRestaurantStore(user);
-    return this.ordersService.create(store.id, user.id, dto);
+    return this.ordersService.create(store.id, viewerOf(user), dto);
   }
 
   @Patch('orders/:id/draft')
-  @Roles('waiter', 'cashier', 'restaurant_owner')
+  @Roles('waiter', 'cashier', 'supervisor', 'restaurant_owner')
   @ApiOperation({ summary: 'Edit a shared draft' })
   @ApiResponse({ status: 409, description: 'Another waiter changed this draft' })
   async updateDraft(
@@ -148,7 +193,7 @@ export class RestaurantController {
 
   /** Drafts are scratch, so any waiter may bin one — no money or table is involved. */
   @Delete('orders/:id/draft')
-  @Roles('waiter', 'cashier', 'restaurant_owner')
+  @Roles('waiter', 'cashier', 'supervisor', 'restaurant_owner')
   @ApiOperation({ summary: 'Discard a draft that was never sent to the kitchen' })
   @ApiResponse({ status: 409, description: 'The order is no longer a draft' })
   async discardDraft(@CurrentUser() user: any, @Param('id') id: string) {
@@ -157,7 +202,7 @@ export class RestaurantController {
   }
 
   @Post('orders/:id/punch')
-  @Roles('waiter', 'cashier', 'restaurant_owner')
+  @Roles('waiter', 'cashier', 'supervisor', 'restaurant_owner')
   @ApiOperation({ summary: 'Send a draft to the kitchen and claim its table' })
   @ApiResponse({ status: 409, description: 'The table was claimed by another order' })
   async punch(
@@ -166,11 +211,11 @@ export class RestaurantController {
     @Body() body: { tableId?: string },
   ) {
     const store = await this.tenantService.requireRestaurantStore(user);
-    return this.ordersService.punchDraft(id, store.id, body?.tableId);
+    return this.ordersService.punchDraft(id, store.id, body?.tableId, viewerOf(user));
   }
 
   @Post('orders/:id/items')
-  @Roles('waiter', 'cashier', 'restaurant_owner')
+  @Roles('waiter', 'cashier', 'supervisor', 'restaurant_owner')
   @ApiOperation({
     summary: 'Append another round to a live order. Drinks lines never reach the kitchen.',
   })
@@ -180,11 +225,34 @@ export class RestaurantController {
     @Body() dto: AddOrderItemsDto,
   ) {
     const store = await this.tenantService.requireRestaurantStore(user);
-    return this.ordersService.addItems(id, store.id, dto);
+    return this.ordersService.addItems(id, store.id, dto, viewerOf(user));
+  }
+
+  /**
+   * The cashier's counterpart to adding a round. Not a DELETE route: it takes
+   * a body (which lines, how many) and it is a money decision, so it carries
+   * the same claim rule as printing and settling.
+   */
+  @Post('orders/:id/items/remove')
+  @Roles('cashier', 'supervisor', 'restaurant_owner')
+  @ApiOperation({
+    summary: 'Strike lines (or part of a line) off a live order. Reprint the bill afterwards.',
+  })
+  @ApiResponse({ status: 400, description: 'Unknown line, or more than the line holds' })
+  @ApiResponse({ status: 403, description: 'Another cashier printed this bill' })
+  @ApiResponse({ status: 409, description: 'Not live, or nothing would be left — cancel instead' })
+  async removeItems(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() dto: RemoveOrderItemsDto,
+  ) {
+    const store = await this.tenantService.requireRestaurantStore(user);
+    return this.ordersService.removeItems(id, store.id, dto, viewerOf(user));
   }
 
   @Patch('orders/:id/status')
-  @Roles('kitchen', 'restaurant_owner')
+  @Roles('kitchen', 'restaurant_owner', 'supervisor')
+  @RequirePermissions('kitchen')
   @ApiOperation({
     summary: 'Kitchen moves an order along: preparing, then handed over to the floor',
   })
@@ -199,15 +267,15 @@ export class RestaurantController {
   }
 
   /**
-   * Step one of taking payment: the bill is printed and the order is claimed
-   * by this cashier. Calling it again reprints (and re-fixes the discount).
+   * Step one of taking payment for an order that was not billed at punch
+   * time (a waiter's dine-in), and the reprint for any order: the bill is
+   * printed, counted, and the order is claimed by this cashier.
    */
   @Post('orders/:id/print-bill')
-  @Roles('cashier', 'restaurant_owner')
+  @Roles('cashier', 'supervisor', 'restaurant_owner')
   @ApiOperation({
-    summary: 'Fix the discount, record the rider on a delivery, and claim the order for this cashier',
+    summary: 'Print or reprint the bill: fix discount and delivery charge, claim the order for this cashier',
   })
-  @ApiResponse({ status: 400, description: 'A delivery bill needs the rider name' })
   @ApiResponse({ status: 403, description: 'Another cashier already printed this bill' })
   async printBill(
     @CurrentUser() user: any,
@@ -224,7 +292,7 @@ export class RestaurantController {
    * open drawer. Only the cashier who printed the bill (or an owner) may.
    */
   @Post('orders/:id/settle')
-  @Roles('cashier', 'restaurant_owner')
+  @Roles('cashier', 'supervisor', 'restaurant_owner')
   @ApiOperation({ summary: 'Mark a printed bill paid, complete the order, and free the table' })
   @ApiResponse({ status: 403, description: 'Another cashier printed this bill' })
   @ApiResponse({
@@ -242,7 +310,7 @@ export class RestaurantController {
 
   /** Deliberately excludes the kitchen — cancelling is a money decision. */
   @Post('orders/:id/cancel')
-  @Roles('cashier', 'restaurant_owner')
+  @Roles('cashier', 'supervisor', 'restaurant_owner')
   @ApiOperation({ summary: 'Cancel an order and free its table' })
   @ApiResponse({ status: 403, description: 'Another cashier printed this bill' })
   async cancel(@CurrentUser() user: any, @Param('id') id: string) {
@@ -253,7 +321,8 @@ export class RestaurantController {
   // ------------------------------------------------------------ reports
 
   @Get('reports/sales')
-  @Roles('restaurant_owner')
+  @Roles('restaurant_owner', 'supervisor')
+  @RequirePermissions('dashboard')
   @ApiOperation({ summary: 'Sales and profit for the owner dashboard' })
   async sales(
     @CurrentUser() user: any,

@@ -41,12 +41,12 @@ export class CreateEmployeeDto {
   /**
    * Free text for general stores, where live data already holds arbitrary
    * values like "Manager" or "Sales Rep". Restaurant stores are restricted to
-   * waiter | kitchen | cashier, enforced in the service where the store's
-   * account type is known.
+   * waiter | kitchen | cashier | supervisor, enforced in the service where the
+   * store's account type is known.
    */
   @ApiProperty({
     example: 'cashier',
-    enum: ['cashier', 'manager', 'staff', 'waiter', 'kitchen'],
+    enum: ['cashier', 'manager', 'staff', 'waiter', 'kitchen', 'supervisor'],
     required: false,
   })
   @IsOptional()

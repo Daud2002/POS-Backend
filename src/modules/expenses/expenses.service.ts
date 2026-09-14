@@ -249,6 +249,44 @@ export class ExpensesService {
       monthCount: month.count,
     };
   }
+
+  /**
+   * Total spend on or after each of several calendar days, in one query.
+   *
+   * Feeds the profit report: each dashboard window (today, this month, …)
+   * becomes one `SUM ... FILTER` column, so six windows cost one table scan
+   * rather than six. A null lower bound means "everything".
+   *
+   * `expenseDate` is a plain DATE, so the bounds are 'YYYY-MM-DD' strings —
+   * no timezone arithmetic happens here; the caller already chose the days.
+   */
+  async sumByPeriods<K extends string>(
+    storeId: string,
+    starts: Record<K, string | null>,
+  ): Promise<Record<K, number>> {
+    const qb = this.expensesRepository
+      .createQueryBuilder('expense')
+      .where('expense.storeId = :storeId', { storeId });
+
+    const keys = Object.keys(starts) as K[];
+    keys.forEach((key, index) => {
+      const from = starts[key];
+      if (from === null) {
+        qb.addSelect('COALESCE(SUM("expense"."amount"), 0)', key);
+      } else {
+        const param = `from${index}`;
+        qb.addSelect(
+          `COALESCE(SUM("expense"."amount") FILTER (WHERE "expense"."expenseDate" >= :${param}), 0)`,
+          key,
+        ).setParameter(param, from);
+      }
+    });
+
+    const row = (await qb.getRawOne<Record<K, string>>()) ?? ({} as Record<K, string>);
+    const out = {} as Record<K, number>;
+    for (const key of keys) out[key] = Number(row[key]) || 0;
+    return out;
+  }
 }
 
 export interface ExpenseFilters {

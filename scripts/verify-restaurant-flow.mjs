@@ -395,27 +395,143 @@ check('settling a released bill is refused until it is printed again',
   (await call('POST', `/restaurant/orders/${drinksOnly.body.id}/settle`, {}, cAuth.accessToken)).status === 409);
 
 // ----------------------------------------------------------- delivery
+// The cashier enters the discount and the delivery charge as the order is
+// punched, and the bill is printed in the same step: 2 biryani + 1 cola =
+// 1100, 10% off = 990, plus 150 to deliver = 1140.
 const delivery = await call('POST', '/restaurant/orders', {
-  orderType: 'delivery', items: [{ productId: p1.body.id, quantity: 1 }],
+  orderType: 'delivery',
+  items: [{ productId: p1.body.id, quantity: 2 }, { productId: cola.body.id, quantity: 1 }],
   customerName: 'Sana', customerPhone: '0300-0000000', deliveryAddress: '12 Main Street',
+  discountType: 'percent', discountValue: 10, deliveryCharge: 150, printBill: true,
 }, cAuth.accessToken);
-check('cashier creates a delivery order', delivery.status === 201, `status ${delivery.status}`);
-check('a delivery bill needs the rider name',
-  (await call('POST', `/restaurant/orders/${delivery.body.id}/print-bill`, {}, cAuth.accessToken)).status === 400);
-const riderBill = await call('POST', `/restaurant/orders/${delivery.body.id}/print-bill`, { riderName: 'Bilal' }, cAuth.accessToken);
-check('the rider is recorded on the bill', riderBill.body?.riderName === 'Bilal', String(riderBill.body?.riderName));
-check('a reprint keeps the rider when none is sent',
-  (await call('POST', `/restaurant/orders/${delivery.body.id}/print-bill`, {}, cAuth.accessToken)).body?.riderName === 'Bilal');
+check('cashier punches a delivery with discount, charge and print', delivery.status === 201, `status ${delivery.status} ${delivery.body?.message ?? ''}`);
+check('the delivery goes to the kitchen as requested', delivery.body?.orderStatus === 'requested', delivery.body?.orderStatus);
+check('the discount is fixed at punch time', Number(delivery.body?.discount) === 110, String(delivery.body?.discount));
+check('the delivery charge is stored', Number(delivery.body?.deliveryCharge) === 150, String(delivery.body?.deliveryCharge));
+check('total = discounted subtotal + delivery charge', Number(delivery.body?.total) === 1140, String(delivery.body?.total));
+check('the bill is printed and claimed as it is created',
+  delivery.body?.billPrinted === true && delivery.body?.billPrintedById === cAuth.user?.id,
+  `${delivery.body?.billPrinted} / ${delivery.body?.billPrintedById}`);
+check('the first print counts as one, not a reprint',
+  delivery.body?.billPrintCount === 1 && delivery.body?.reprintCount === 0,
+  `${delivery.body?.billPrintCount} / ${delivery.body?.reprintCount}`);
+
+const history0 = await call('GET', `/restaurant/orders/${delivery.body.id}/history`, undefined, cAuth.accessToken);
+check('the history opens with the original order and its print',
+  history0.body?.events?.map((e) => e.type).join(',') === 'placed,bill_printed',
+  String(history0.body?.events?.map((e) => e.type)));
+check('the original order snapshots every line', history0.body?.events?.[0]?.payload?.lines?.length === 2);
+check('history rows name the cashier', history0.body?.events?.[0]?.actorName === 'Cash Desk', String(history0.body?.events?.[0]?.actorName));
+check('a waiter cannot read the history',
+  (await call('GET', `/restaurant/orders/${delivery.body.id}/history`, undefined, wAuth.accessToken)).status === 403);
+
+check('a waiter cannot have the bill printed as they punch',
+  (await call('POST', '/restaurant/orders', {
+    orderType: 'dine_in', tableId: t2.body.id, items: [{ productId: p1.body.id, quantity: 1 }], printBill: true,
+  }, wAuth.accessToken)).status === 400);
+const chargedTakeaway = await call('POST', '/restaurant/orders', {
+  orderType: 'takeaway', items: [{ productId: cola.body.id, quantity: 1 }], deliveryCharge: 150,
+}, cAuth.accessToken);
+check('a delivery charge on a takeaway is stored as 0', Number(chargedTakeaway.body?.deliveryCharge) === 0, String(chargedTakeaway.body?.deliveryCharge));
+
+// A bare reprint — what an old till sends — must not wipe the punch-time figures.
+const reprint = await call('POST', `/restaurant/orders/${delivery.body.id}/print-bill`, {}, cAuth.accessToken);
+check('a reprint with an empty body keeps the discount and the charge',
+  Number(reprint.body?.discount) === 110 && Number(reprint.body?.deliveryCharge) === 150,
+  `${reprint.body?.discount} / ${reprint.body?.deliveryCharge}`);
+check('a reprint is counted', reprint.body?.billPrintCount === 2 && reprint.body?.reprintCount === 1,
+  `${reprint.body?.billPrintCount} / ${reprint.body?.reprintCount}`);
+check('the rider is no longer required on a delivery bill', reprint.status === 201, `status ${reprint.status}`);
+
+// The claiming cashier edits the order: the claim is kept (they reprint
+// themselves), and a percentage discount follows the new subtotal.
+const cashierRound = await call('POST', `/restaurant/orders/${delivery.body.id}/items`, {
+  items: [{ productId: p2.body.id, quantity: 1 }],
+}, cAuth.accessToken);
+check("the claiming cashier's round keeps the claim", cashierRound.body?.billPrinted === true, String(cashierRound.body?.billPrinted));
+check('the 10% discount follows the new subtotal (2300)', Number(cashierRound.body?.discount) === 230, String(cashierRound.body?.discount));
+check('the charge survives a round', Number(cashierRound.body?.total) === 2220, String(cashierRound.body?.total));
+
+const biryaniLine = cashierRound.body?.items?.find((i) => i.productId === p1.body.id);
+const colaLine = cashierRound.body?.items?.find((i) => i.productId === cola.body.id);
+const karahiLine = cashierRound.body?.items?.find((i) => i.productId === p2.body.id);
+const partial = await call('POST', `/restaurant/orders/${delivery.body.id}/items/remove`, {
+  items: [{ orderItemId: biryaniLine?.id, quantity: 1 }],
+}, cAuth.accessToken);
+check('cashier removes part of a line', partial.status === 201, `status ${partial.status} ${partial.body?.message ?? ''}`);
+check('the line is reduced, not deleted',
+  partial.body?.items?.find((i) => i.id === biryaniLine?.id)?.quantity === 1 && partial.body?.items?.length === 3);
+check('totals follow the removal (1800 - 10% + 150)', Number(partial.body?.total) === 1770, String(partial.body?.total));
+
+const whole = await call('POST', `/restaurant/orders/${delivery.body.id}/items/remove`, {
+  items: [{ orderItemId: colaLine?.id }],
+}, cAuth.accessToken);
+check('cashier removes a whole line', whole.status === 201 && whole.body?.items?.length === 2, `status ${whole.status}`);
+check('removing more than the line holds is refused',
+  (await call('POST', `/restaurant/orders/${delivery.body.id}/items/remove`, {
+    items: [{ orderItemId: biryaniLine?.id, quantity: 5 }],
+  }, cAuth.accessToken)).status === 400);
+check('removing the last line is refused — cancel instead',
+  (await call('POST', `/restaurant/orders/${delivery.body.id}/items/remove`, {
+    items: [{ orderItemId: biryaniLine?.id }, { orderItemId: karahiLine?.id }],
+  }, cAuth.accessToken)).status === 409);
+check('another cashier cannot remove from a claimed bill',
+  (await call('POST', `/restaurant/orders/${delivery.body.id}/items/remove`, {
+    items: [{ orderItemId: karahiLine?.id }],
+  }, c2Auth.accessToken)).status === 403);
+const ownerRemove = await call('POST', `/restaurant/orders/${delivery.body.id}/items/remove`, {
+  items: [{ orderItemId: karahiLine?.id }],
+}, OT);
+check('the owner can remove from any bill', ownerRemove.status === 201 && ownerRemove.body?.items?.length === 1, `status ${ownerRemove.status}`);
+check('the order stays with the kitchen while a dish is still cooking', ownerRemove.body?.orderStatus === 'requested', ownerRemove.body?.orderStatus);
+
+const history1 = await call('GET', `/restaurant/orders/${delivery.body.id}/history`, undefined, OT);
+const kinds = history1.body?.events?.map((e) => e.type) ?? [];
+check('every change is in the history',
+  kinds.join(',') === 'placed,bill_printed,bill_printed,items_added,items_removed,items_removed,items_removed',
+  kinds.join(','));
+check('a reprint row says so', history1.body?.events?.[2]?.payload?.reprint === true && history1.body?.events?.[2]?.payload?.printNumber === 2);
+check('a removal row records how many came off',
+  history1.body?.events?.[4]?.payload?.lines?.[0]?.quantity === 1 && history1.body?.events?.[4]?.payload?.lines?.[0]?.productName === 'Biryani');
+check('the owner is named on their removal', history1.body?.events?.[6]?.actorRole === 'restaurant_owner');
+
+const draftForRemoval = await call('POST', '/restaurant/orders', {
+  orderType: 'takeaway', items: [{ productId: p1.body.id, quantity: 1 }], isDraft: true,
+}, cAuth.accessToken);
+check('a draft cannot have lines removed — edit the draft instead',
+  (await call('POST', `/restaurant/orders/${draftForRemoval.body.id}/items/remove`, {
+    items: [{ orderItemId: draftForRemoval.body?.items?.[0]?.id }],
+  }, cAuth.accessToken)).status === 409);
+await call('DELETE', `/restaurant/orders/${draftForRemoval.body.id}/draft`, undefined, cAuth.accessToken);
+
+// Settled at 1 biryani (500), 10% off = 450, plus 150 = 600.
+const deliveryPaid = await call('POST', `/restaurant/orders/${delivery.body.id}/settle`, { paymentMethod: 'cash' }, cAuth.accessToken);
+check('the delivery settles at the discounted total plus the charge', Number(deliveryPaid.body?.total) === 600, String(deliveryPaid.body?.total));
+check('a settled order cannot have lines removed',
+  (await call('POST', `/restaurant/orders/${delivery.body.id}/items/remove`, {
+    items: [{ orderItemId: biryaniLine?.id }],
+  }, OT)).status === 409);
+
+// Striking the last cooked dish off a ticket leaves the kitchen nothing to do.
+const lastDish = await call('POST', '/restaurant/orders', {
+  orderType: 'takeaway', items: [{ productId: p1.body.id, quantity: 1 }, { productId: cola.body.id, quantity: 1 }],
+}, cAuth.accessToken);
+const onlyDrinks = await call('POST', `/restaurant/orders/${lastDish.body.id}/items/remove`, {
+  items: [{ orderItemId: lastDish.body?.items?.find((i) => i.productId === p1.body.id)?.id }],
+}, cAuth.accessToken);
+check('removing the last kitchen line readies the order', onlyDrinks.body?.orderStatus === 'handed_over', onlyDrinks.body?.orderStatus);
 
 // ------------------------------------------------------------ reports
 const report = await call('GET', '/restaurant/reports/sales', undefined, OT);
 check('owner reads the sales report', report.status === 200);
 // Settled: 1650 (2 biryani + 1 karahi, 25% off) + 250 (1 biryani flat) + 0 (1 biryani free)
-check('report revenue matches settled orders', Number(report.body?.revenue) === 1900, String(report.body?.revenue));
-// Cost: (2x300 + 1x800) + 300 + 300 = 1400+600 = 2000
-check('report cost uses snapshotted unitCost', Number(report.body?.cost) === 2000, String(report.body?.cost));
-check('profit = revenue - cost', Number(report.body?.profit) === -100, String(report.body?.profit));
-check('report excludes drafts and live orders', report.body?.orderCount === 3, String(report.body?.orderCount));
+//        + 450 (the delivery's food: 1 biryani, 10% off — its 150 charge is not revenue)
+check('report revenue matches settled orders', Number(report.body?.revenue) === 2350, String(report.body?.revenue));
+check('delivery charges are reported on their own line', Number(report.body?.deliveryChargeTotal) === 150, String(report.body?.deliveryChargeTotal));
+// Cost: (2x300 + 1x800) + 300 + 300 + 300 = 2300
+check('report cost uses snapshotted unitCost', Number(report.body?.cost) === 2300, String(report.body?.cost));
+check('profit = revenue - cost', Number(report.body?.profit) === 50, String(report.body?.profit));
+check('report excludes drafts and live orders', report.body?.orderCount === 4, String(report.body?.orderCount));
 check('waiter cannot read reports', (await call('GET', '/restaurant/reports/sales', undefined, wAuth.accessToken)).status === 403);
 
 // ------------------------------------------------- cross-tenant safety
@@ -431,6 +547,155 @@ if (generalOwner?.accessToken) {
 const invoice = await call('GET', `/invoices/${punch.body.id}`, undefined, cAuth.accessToken);
 check('invoice includes table and waiter', !!invoice.body?.tableName && !!invoice.body?.waiterName,
   `${invoice.body?.tableName} / ${invoice.body?.waiterName}`);
+
+// ---------------------------------------------------------- customers
+// The delivery above filed 'Sana' into the store's directory by phone.
+const customers = await call('GET', '/customers?withCount=true&search=Sana', undefined, OT);
+check('a delivery order files its customer', customers.status === 200 && customers.body?.total === 1,
+  `status ${customers.status} total ${customers.body?.total}`);
+const sana = customers.body?.items?.[0];
+check('the customer belongs to this store', sana?.storeId === storeId, String(sana?.storeId));
+check('the phone is stored normalised', sana?.phone === '03000000000', String(sana?.phone));
+check('the order links to the customer', delivery.body?.customerId === sana?.id, String(delivery.body?.customerId));
+const sanaAfterSettle = await call('GET', `/customers/${sana?.id}`, undefined, OT);
+check('settling a delivery adds to the customer total',
+  Number(sanaAfterSettle.body?.totalSpent) === 600, String(sanaAfterSettle.body?.totalSpent));
+
+// Same phone, typed differently, with a different name: the record is reused untouched.
+const repeat = await call('POST', '/restaurant/orders', {
+  orderType: 'delivery',
+  items: [{ productId: cola.body.id, quantity: 1 }],
+  customerName: 'Sana K', customerPhone: '0300 0000000', deliveryAddress: 'Flat 4, 12 Main Street',
+}, cAuth.accessToken);
+check('a repeat delivery reuses the customer', repeat.status === 201 && repeat.body?.customerId === sana?.id,
+  `status ${repeat.status} ${repeat.body?.customerId}`);
+const sanaAgain = await call('GET', `/customers/${sana?.id}`, undefined, OT);
+check('the existing record is not overwritten', sanaAgain.body?.name === 'Sana' && sanaAgain.body?.address === '12 Main Street',
+  `${sanaAgain.body?.name} / ${sanaAgain.body?.address}`);
+check('the directory still has one Sana',
+  (await call('GET', '/customers?withCount=true&search=0300', undefined, OT)).body?.total === 1);
+
+const suggest = await call('GET', '/customers/suggest?q=San', undefined, cAuth.accessToken);
+check('the till gets live suggestions', suggest.status === 200 && suggest.body?.length === 1 && suggest.body?.[0]?.name === 'Sana',
+  `status ${suggest.status} ${JSON.stringify(suggest.body)}`);
+check('suggestions match on address too',
+  (await call('GET', '/customers/suggest?q=Main St', undefined, cAuth.accessToken)).body?.length === 1);
+check('suggestions match a phone typed with a dash',
+  (await call('GET', '/customers/suggest?q=0300-00', undefined, cAuth.accessToken)).body?.length === 1);
+check('a waiter gets no suggestions', (await call('GET', '/customers/suggest?q=San', undefined, wAuth.accessToken)).status === 403);
+check('a waiter cannot list customers', (await call('GET', '/customers', undefined, wAuth.accessToken)).status === 403);
+check('customers need a login', (await call('GET', '/customers')).status === 401);
+check('a duplicate phone is refused',
+  (await call('POST', '/customers', { name: 'Dup', phone: '0300 0000000', address: 'x' }, OT)).status === 409);
+if (generalOwner?.accessToken) {
+  const theirs = await call('GET', '/customers?withCount=true&search=Sana', undefined, generalOwner.accessToken);
+  check('another store cannot see this customer', theirs.status === 200 && theirs.body?.total === 0, `total ${theirs.body?.total}`);
+}
+const edited = await call('PATCH', `/customers/${sana?.id}`, { name: 'Sana Khan', city: 'Lahore' }, OT);
+check('the owner edits a customer', edited.status === 200 && edited.body?.name === 'Sana Khan', `status ${edited.status}`);
+
+// --------------------------------------------------------- supervisor
+const supervisor = { email: `super-${stamp}@example.com`, password: 'super123' };
+const rSup = await mkEmp(supervisor, 'supervisor', 'Shift Lead');
+check('create supervisor', rSup.status === 201, `status ${rSup.status} ${rSup.body?.message ?? ''}`);
+const sAuth = await login(supervisor.email, supervisor.password);
+const ST = sAuth?.accessToken;
+check('supervisor effectiveRole', sAuth?.user?.effectiveRole === 'supervisor', sAuth?.user?.effectiveRole);
+check('supervisor starts with the till and the ledger',
+  sAuth?.user?.permissions?.includes('cashier') && sAuth?.user?.permissions?.includes('expenses'),
+  String(sAuth?.user?.permissions));
+check('supervisor cannot read reports before being granted the dashboard',
+  (await call('GET', '/restaurant/reports/sales', undefined, ST)).status === 403);
+check('supervisor cannot create tables before being granted them',
+  (await call('POST', '/restaurant/tables', { name: 'Sup Table' }, ST)).status === 403);
+check('supervisor cannot see the drawers before being granted shifts',
+  (await call('GET', '/shifts', undefined, ST)).status === 403);
+check('supervisor can never open staff management',
+  (await call('GET', `/employees/store/${storeId}`, undefined, ST)).status === 403);
+
+const offered = await call('GET', `/employees/${rSup.body?.id}/permissions`, undefined, OT);
+check('the owner is offered every module for a supervisor',
+  ['dashboard', 'shifts', 'customers', 'kitchen', 'tables', 'products', 'categories', 'orders', 'expenses']
+    .every((m) => offered.body?.grantable?.includes(m)),
+  String(offered.body?.grantable));
+const waiterOffered = await call('GET', `/employees/${rWaiter.body?.id}/permissions`, undefined, OT);
+check('a waiter is still never offered the dashboard or shifts',
+  !waiterOffered.body?.grantable?.includes('dashboard') && !waiterOffered.body?.grantable?.includes('shifts'),
+  String(waiterOffered.body?.grantable));
+const granted = await call('PATCH', `/employees/${rSup.body?.id}/permissions`, {
+  permissions: ['expenses', 'dashboard', 'tables', 'shifts', 'customers'],
+}, OT);
+check('the owner grants the supervisor owner modules', granted.status === 200 && granted.body?.permissions?.includes('dashboard'),
+  `status ${granted.status} ${String(granted.body?.permissions)}`);
+check('supervisor reads reports once granted', (await call('GET', '/restaurant/reports/sales', undefined, ST)).status === 200);
+check('supervisor creates a table once granted', (await call('POST', '/restaurant/tables', { name: 'Sup Table' }, ST)).status === 201);
+check('supervisor sees the drawers once granted', (await call('GET', '/shifts', undefined, ST)).status === 200);
+check('supervisor manages customers once granted',
+  (await call('PATCH', `/customers/${sana?.id}`, { city: 'Karachi' }, ST)).status === 200);
+check('supervisor still cannot open staff management',
+  (await call('GET', `/employees/store/${storeId}`, undefined, ST)).status === 403);
+
+// A supervisor's edits leave no history; their punch and print still do.
+const supOrder = await call('POST', '/restaurant/orders', {
+  orderType: 'takeaway', items: [{ productId: p1.body.id, quantity: 2 }], printBill: true,
+}, ST);
+check('supervisor punches and prints a takeaway', supOrder.status === 201, `status ${supOrder.status} ${supOrder.body?.message ?? ''}`);
+const supAdd = await call('POST', `/restaurant/orders/${supOrder.body?.id}/items`, {
+  items: [{ productId: cola.body.id, quantity: 1 }],
+}, ST);
+check('supervisor adds a round', supAdd.status === 201, `status ${supAdd.status}`);
+const supRemove = await call('POST', `/restaurant/orders/${supOrder.body?.id}/items/remove`, {
+  items: [{ orderItemId: supAdd.body?.items?.find((i) => i.productId === p1.body.id)?.id, quantity: 1 }],
+}, ST);
+check('supervisor strikes a line', supRemove.status === 201, `status ${supRemove.status}`);
+const supHistory = await call('GET', `/restaurant/orders/${supOrder.body?.id}/history`, undefined, ST);
+check('a supervisor\'s edits are not in the history, the punch and print are',
+  supHistory.body?.events?.map((e) => e.type).join(',') === 'placed,bill_printed',
+  String(supHistory.body?.events?.map((e) => e.type)));
+// The claim: a supervisor may settle a bill another cashier printed.
+const claimed = await call('POST', '/restaurant/orders', {
+  orderType: 'takeaway', items: [{ productId: cola.body.id, quantity: 1 }], printBill: true,
+}, c2Auth.accessToken);
+const supSettle = await call('POST', `/restaurant/orders/${claimed.body?.id}/settle`, { paymentMethod: 'cash' }, ST);
+check('supervisor settles a bill another cashier printed', supSettle.status === 201, `status ${supSettle.status} ${supSettle.body?.message ?? ''}`);
+
+// ------------------------------------------------------------- profit
+const profit = await call('GET', '/reports/profit?tz=Asia/Karachi', undefined, OT);
+check('owner reads the profit report', profit.status === 200, `status ${profit.status} ${profit.body?.message ?? ''}`);
+check('the report echoes the zone', profit.body?.tz === 'Asia/Karachi', String(profit.body?.tz));
+const allTime = profit.body?.periods?.allTime;
+// The sales report and the profit report count the same settled orders the
+// same way, so the two must agree to the penny.
+const salesNow = (await call('GET', '/restaurant/reports/sales', undefined, OT)).body;
+check('all-time revenue matches the sales report',
+  Number(allTime?.revenue) === Number(salesNow?.revenue), `${allTime?.revenue} vs ${salesNow?.revenue}`);
+check('all-time cost matches the sales report',
+  Number(allTime?.cost) === Number(salesNow?.cost), `${allTime?.cost} vs ${salesNow?.cost}`);
+check('all-time order count matches the sales report',
+  allTime?.orderCount === salesNow?.orderCount, `${allTime?.orderCount} vs ${salesNow?.orderCount}`);
+check('gross profit = revenue - cost', Number(allTime?.grossProfit) === Number((Number(allTime?.revenue) - Number(allTime?.cost)).toFixed(2)),
+  `${allTime?.revenue} - ${allTime?.cost} = ${allTime?.grossProfit}`);
+check('today matches all time for a fresh store',
+  profit.body?.periods?.today?.orderCount === allTime?.orderCount, `${profit.body?.periods?.today?.orderCount} / ${allTime?.orderCount}`);
+check('every window is present',
+  ['today', 'thisMonth', 'last3Months', 'last6Months', 'thisYear', 'allTime'].every((k) => profit.body?.periods?.[k]),
+  String(Object.keys(profit.body?.periods ?? {})));
+const todayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Karachi' });
+const spend = await call('POST', '/expenses', { title: 'Gas', amount: 100, expenseDate: todayKey }, OT);
+check('owner books an expense', spend.status === 201, `status ${spend.status} ${spend.body?.message ?? ''}`);
+const profit2 = (await call('GET', '/reports/profit?tz=Asia/Karachi', undefined, OT)).body;
+check('net profit = gross profit - expenses',
+  Number(profit2?.periods?.today?.expenses) === 100 &&
+    Number(profit2?.periods?.today?.netProfit) === Number((Number(profit2?.periods?.today?.grossProfit) - 100).toFixed(2)),
+  `${profit2?.periods?.today?.grossProfit} - ${profit2?.periods?.today?.expenses} = ${profit2?.periods?.today?.netProfit}`);
+check('an unknown zone falls back to UTC',
+  (await call('GET', '/reports/profit?tz=Not/AZone', undefined, OT)).body?.tz === 'UTC');
+check('a waiter cannot read the profit report', (await call('GET', '/reports/profit', undefined, wAuth.accessToken)).status === 403);
+const noLedger = await call('PATCH', `/employees/${rSup.body?.id}/permissions`, { permissions: ['dashboard'] }, OT);
+check('a dashboard without the ledger shows gross but no net',
+  noLedger.status === 200 &&
+    (await call('GET', '/reports/profit?tz=Asia/Karachi', undefined, ST)).body?.periods?.allTime?.expenses === null,
+  String((await call('GET', '/reports/profit?tz=Asia/Karachi', undefined, ST)).body?.periods?.allTime?.expenses));
 
 let failed = 0;
 for (const r of results) {

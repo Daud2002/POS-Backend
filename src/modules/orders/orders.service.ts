@@ -98,7 +98,10 @@ export class OrdersService {
     // If customerId is provided, fetch customer and set customerName from it
     let customerName: string | undefined;
     if (customerId) {
-      const customer = await this.customersRepository.findOne({ where: { id: customerId } });
+      // Scoped to the store: a customer id from another tenant is not ours.
+      const customer = await this.customersRepository.findOne({
+        where: { id: customerId, storeId },
+      });
       if (!customer) {
         throw new BadRequestException(`Customer with ID ${customerId} not found`);
       }
@@ -148,6 +151,14 @@ export class OrdersService {
         subtotal: itemSubtotal,
         discount: itemDiscount,
         total: itemTotal,
+        // Cost is snapshotted at sale time so editing a product's cost later
+        // cannot rewrite the margin on past orders. NULL (not 0) when the
+        // product has no cost recorded, so the profit report can count the
+        // lines it could not price rather than silently calling them free.
+        unitCost:
+          product.costPrice === null || product.costPrice === undefined
+            ? null
+            : Number(product.costPrice),
       });
 
       orderItems.push(orderItem);

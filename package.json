@@ -35,7 +35,9 @@
     "verify:order-numbers": "node scripts/verify-order-numbers.mjs",
     "verify:pagination": "node scripts/verify-pagination.mjs",
     "db:seed-snackfuel": "ts-node scripts/seed-snackfuel.ts",
-    "verify:search": "node scripts/verify-search.mjs"
+    "verify:search": "node scripts/verify-search.mjs",
+    "db:backfill-customer-store": "ts-node scripts/backfill-customer-store.ts",
+    "db:sync-snackfuel": "ts-node scripts/sync-snackfuel-menu.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.3.0",

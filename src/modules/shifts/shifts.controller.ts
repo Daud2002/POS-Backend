@@ -37,7 +37,8 @@ import {
  * Access follows the codebase's split: cashier-facing routes are gated on the
  * `cashier` MODULE (an owner holds it too, since they staff the till
  * themselves), while anything that reviews or overrides another person's
- * drawer is gated on the owner ROLE.
+ * drawer is gated on the `shifts` MODULE — which an owner always holds, and
+ * which only a supervisor can be handed.
  *
  * Restaurant-only for now — `requireRestaurantStore` rejects general tenants,
  * whose POS has no till widget yet.
@@ -97,7 +98,8 @@ export class ShiftsController {
   }
 
   @Get('summary/by-cashier')
-  @Roles('store_owner', 'restaurant_owner', 'super_admin')
+  @Roles('store_owner', 'restaurant_owner', 'super_admin', 'supervisor')
+  @RequirePermissions('shifts')
   @ApiOperation({ summary: 'One row per cashier: takings, variance and what is still to collect' })
   @ApiQuery({ name: 'from', required: false, description: 'ISO datetime; filters on openedAt' })
   @ApiQuery({ name: 'to', required: false, description: 'ISO datetime; filters on openedAt' })
@@ -111,7 +113,8 @@ export class ShiftsController {
   }
 
   @Get()
-  @Roles('store_owner', 'restaurant_owner', 'super_admin')
+  @Roles('store_owner', 'restaurant_owner', 'super_admin', 'supervisor')
+  @RequirePermissions('shifts')
   @ApiOperation({ summary: 'All shifts for the store (owner)' })
   @ApiQuery({ name: 'status', required: false, enum: ['open', 'closed', 'collected'] })
   @ApiQuery({ name: 'userId', required: false })
@@ -179,7 +182,8 @@ export class ShiftsController {
    * unknown rather than zero — nobody counted the drawer.
    */
   @Post(':id/force-close')
-  @Roles('store_owner', 'restaurant_owner', 'super_admin')
+  @Roles('store_owner', 'restaurant_owner', 'super_admin', 'supervisor')
+  @RequirePermissions('shifts')
   @ApiOperation({ summary: 'Owner closes a shift the cashier left open' })
   async forceClose(
     @CurrentUser() user: any,
@@ -194,7 +198,8 @@ export class ShiftsController {
   }
 
   @Post(':id/collect')
-  @Roles('store_owner', 'restaurant_owner', 'super_admin')
+  @Roles('store_owner', 'restaurant_owner', 'super_admin', 'supervisor')
+  @RequirePermissions('shifts')
   @ApiOperation({ summary: 'Owner confirms the cash was handed over' })
   @ApiResponse({ status: 409, description: 'Shift is still open, or already collected' })
   async collect(

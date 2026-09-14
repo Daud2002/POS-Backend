@@ -27,6 +27,8 @@ export interface InvoiceData {
     orderStatus?: string;
     discountType?: string | null;
     discountValue?: number | null;
+    /** On top of the discounted subtotal; 0 on anything but a delivery. */
+    deliveryCharge?: number;
   };
   /** Restaurant dine-in only. Printed on the kitchen ticket and the receipt. */
   tableName?: string | null;
@@ -98,6 +100,7 @@ export class InvoicesService {
           order.discountValue === null || order.discountValue === undefined
             ? null
             : Number(order.discountValue),
+        deliveryCharge: Number(order.deliveryCharge) || 0,
         items: order.items.map(item => ({
           productName: item.productName,
           quantity: item.quantity,

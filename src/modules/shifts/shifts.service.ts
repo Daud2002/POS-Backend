@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository, SelectQueryBuilder } from 'typeorm';
 import { CashierShift, Order, Store } from '../../entities';
 import { round2 } from '../../common/discount';
+import { resolvePermissions } from '../../common/permissions';
 import { toPage, type Page } from '../../common/pagination';
 import { RealtimeGateway, RealtimeEvents } from '../../realtime/realtime.gateway';
 import { CloseShiftDto, CollectShiftDto, ListShiftsQueryDto } from './dto';
@@ -355,7 +356,15 @@ export class ShiftsService {
 
     if (filters.status) qb.andWhere('shift.status = :status', { status: filters.status });
     if (filters.userId) qb.andWhere('shift.userId = :userId', { userId: filters.userId });
-    if (filters.from) qb.andWhere('shift.openedAt >= :from', { from: new Date(filters.from) });
+    // An open drawer is current by definition, so it stays in every window
+    // however old its openedAt. Otherwise the owner's default "Today" view
+    // hides exactly the shift they most need to see: one a cashier opened
+    // days ago and never closed.
+    if (filters.from) {
+      qb.andWhere("(shift.openedAt >= :from OR shift.status = 'open')", {
+        from: new Date(filters.from),
+      });
+    }
     if (filters.to) qb.andWhere('shift.openedAt <= :to', { to: new Date(filters.to) });
 
     return qb;
@@ -629,13 +638,21 @@ export class ShiftsService {
     return shift;
   }
 
+  /**
+   * Who may look at, close or collect a drawer that is not their own.
+   *
+   * Owners always. A supervisor only once the owner has handed them the
+   * `shifts` module — the same module that gates the owner-only routes in the
+   * controller, so the two can never disagree.
+   */
   private isOwner(user: any): boolean {
     return (
       user?.effectiveRole === 'restaurant_owner' ||
       user?.effectiveRole === 'store_owner' ||
       user?.effectiveRole === 'super_admin' ||
       user?.role === 'admin' ||
-      user?.role === 'store_owner'
+      user?.role === 'store_owner' ||
+      (user?.effectiveRole === 'supervisor' && resolvePermissions(user).includes('shifts'))
     );
   }
 

@@ -24,7 +24,12 @@ export type PermissionKey =
   | 'categories'
   | 'orders'
   | 'customers'
-  | 'inventory';
+  | 'inventory'
+  /**
+   * The owner's view of every cashier's drawer — who is on the till, what
+   * they took, and what is still to be handed over. Restaurant only.
+   */
+  | 'shifts';
 
 export const ALL_PERMISSIONS: PermissionKey[] = [
   'dashboard',
@@ -38,9 +43,16 @@ export const ALL_PERMISSIONS: PermissionKey[] = [
   'orders',
   'customers',
   'inventory',
+  'shifts',
 ];
 
-/** Modules that only exist on a restaurant tenant. */
+/**
+ * Modules that exist on a restaurant tenant.
+ *
+ * `customers` is here as well as on general tenants: a restaurant's delivery
+ * orders file their customers into the same directory, so the owner needs a
+ * screen to manage them.
+ */
 const RESTAURANT_MODULES: PermissionKey[] = [
   'dashboard',
   'expenses',
@@ -50,6 +62,8 @@ const RESTAURANT_MODULES: PermissionKey[] = [
   'products',
   'categories',
   'orders',
+  'customers',
+  'shifts',
 ];
 
 /** Modules that only exist on a general tenant. */
@@ -74,6 +88,8 @@ const RESTAURANT_BASE: Record<string, PermissionKey> = {
   cashier: 'cashier',
   kitchen: 'kitchen',
   waiter: 'tables',
+  // A supervisor is a cashier first: same till, same landing screen.
+  supervisor: 'cashier',
 };
 
 /** General-account staff all start on the POS, whatever their job title. */
@@ -87,16 +103,30 @@ const GENERAL_BASE: PermissionKey = 'pos';
  * only be given the back-office ledger — granting them the till or the menu
  * editor is not a mistake worth making possible.
  *
- * `dashboard` is deliberately NOT grantable on a restaurant tenant. It is the
- * OWNER's dashboard: whole-store revenue, profit, cost prices and every
- * cashier's takings. A cashier gets their own screen instead — what they
- * personally collected — which their base `cashier` module already opens.
- * Kitchen and waiting staff have no business seeing store revenue at all.
+ * `dashboard` and `shifts` are deliberately NOT grantable to a cashier,
+ * kitchen hand or waiter. They are the OWNER's views: whole-store revenue,
+ * profit, cost prices and every cashier's takings. A cashier gets their own
+ * screen instead — what they personally collected — which their base
+ * `cashier` module already opens.
+ *
+ * A supervisor is the exception: the owner's stand-in, who may be handed
+ * every module the owner holds. Staff management is not a module at all (it
+ * is gated on the owner role), so it can never be delegated this way.
  */
 const RESTAURANT_GRANTABLE: Record<string, PermissionKey[]> = {
-  cashier: ['expenses', 'tables', 'categories', 'products', 'orders'],
+  cashier: ['expenses', 'tables', 'categories', 'products', 'orders', 'customers'],
   kitchen: ['expenses'],
   waiter: ['expenses'],
+  supervisor: RESTAURANT_MODULES.filter((p) => p !== RESTAURANT_BASE.supervisor),
+};
+
+/**
+ * Modules granted the moment an employee is created, before the owner has
+ * touched their permissions. Only a supervisor has any: they are trusted with
+ * the ledger from day one. Everyone else starts on their base module alone.
+ */
+const RESTAURANT_DEFAULT_GRANTS: Record<string, PermissionKey[]> = {
+  supervisor: ['expenses'],
 };
 
 /** General-account staff may be assigned any module their tenant has. */
@@ -150,6 +180,22 @@ export function grantablePermissionsFor(
   if (!isRestaurant(accountType)) return [...GENERAL_GRANTABLE];
   const grantable = RESTAURANT_GRANTABLE[normalizeDesignation(designation)];
   return [...(grantable ?? RESTAURANT_GRANTABLE.cashier)];
+}
+
+/**
+ * The modules to store on a freshly created employee, or on one whose
+ * designation just changed.
+ *
+ * Returns null when the designation carries no defaults, so the caller can
+ * leave the column at its "never customised" NULL rather than writing `[]`.
+ */
+export function defaultGrantsFor(
+  accountType?: string | null,
+  designation?: string | null,
+): PermissionKey[] | null {
+  if (!isRestaurant(accountType)) return null;
+  const grants = RESTAURANT_DEFAULT_GRANTS[normalizeDesignation(designation)];
+  return grants?.length ? [...grants] : null;
 }
 
 /**

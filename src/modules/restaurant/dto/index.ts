@@ -2,6 +2,7 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -9,6 +10,7 @@ import {
   IsUUID,
   MaxLength,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -112,6 +114,44 @@ export class CreateRestaurantOrderDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  /**
+   * The cashier enters the discount and the delivery charge while punching
+   * the order, so the bill that prints as it is sent is already right. All
+   * three must be declared here or `whitelist: true` drops them silently.
+   */
+  @ApiPropertyOptional({ enum: ['amount', 'percent'] })
+  @IsOptional()
+  @IsIn(['amount', 'percent'])
+  discountType?: 'amount' | 'percent';
+
+  @ApiPropertyOptional({ example: 250, description: 'Raw figure: 250 for flat, 25 for 25%.' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  discountValue?: number;
+
+  @ApiPropertyOptional({
+    example: 100,
+    description: 'Delivery charge for this order. Ignored (stored as 0) unless orderType is delivery.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  deliveryCharge?: number;
+
+  /**
+   * Print the bill as part of creating the order. Cashiers and owners only:
+   * printing claims the order for the printer, and a waiter must never hold
+   * a claim. Ignored on drafts.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Record the bill as printed at creation (the till prints it from the response). Cashier/owner only; ignored on drafts.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  printBill?: boolean;
 }
 
 export class UpdateDraftOrderDto {
@@ -149,6 +189,34 @@ export class AddOrderItemsDto {
   items: RestaurantOrderItemDto[];
 }
 
+export class RemoveOrderItemDto {
+  @ApiProperty({ description: 'The order_items.id to take off.' })
+  @IsUUID()
+  orderItemId: string;
+
+  @ApiPropertyOptional({
+    example: 1,
+    description: 'How many to remove. Omit to remove the whole line.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  quantity?: number;
+}
+
+/**
+ * Taking items OFF a live order. The cashier's counterpart to AddOrderItemsDto:
+ * the bill is reprinted afterwards, and the kitchen gets a cancellation ticket
+ * for anything it had not yet handed over.
+ */
+export class RemoveOrderItemsDto {
+  @ApiProperty({ type: [RemoveOrderItemDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RemoveOrderItemDto)
+  items: RemoveOrderItemDto[];
+}
+
 /**
  * What the KITCHEN may set.
  *
@@ -166,27 +234,46 @@ export class UpdateOrderStatusDto {
 }
 
 /**
- * Printing the bill — the step BEFORE money changes hands.
+ * Printing (or reprinting) the bill — the step BEFORE money changes hands.
  *
- * The discount is fixed here, because it is what gets printed; settling
- * afterwards charges exactly the printed figure. To change it, print again.
+ * Every money field here is "absent = keep what is stored, null = clear it".
+ * A cashier-punched order already carries its discount and delivery charge
+ * from creation, and a reprint after a lost slip must not wipe them just
+ * because the client sent an empty body — which is exactly what an older
+ * mobile build does.
  */
 export class PrintBillDto {
-  @ApiPropertyOptional({ enum: ['amount', 'percent'] })
-  @IsOptional()
+  @ApiPropertyOptional({
+    enum: ['amount', 'percent'],
+    nullable: true,
+    description: 'Omit to keep the stored discount; send null to remove it.',
+  })
+  @ValidateIf((o) => o.discountType !== undefined && o.discountType !== null)
   @IsIn(['amount', 'percent'])
-  discountType?: 'amount' | 'percent';
-
-  @ApiPropertyOptional({ example: 250, description: 'Raw figure: 250 for flat, 25 for 25%.' })
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  discountValue?: number;
+  discountType?: 'amount' | 'percent' | null;
 
   @ApiPropertyOptional({
-    example: 'Bilal',
-    description: 'Required on a delivery order: who carries it. Printed on the bill.',
+    example: 250,
+    nullable: true,
+    description: 'Raw figure: 250 for flat, 25 for 25%. Omit to keep; null to clear.',
   })
+  @ValidateIf((o) => o.discountValue !== undefined && o.discountValue !== null)
+  @IsNumber()
+  @Min(0)
+  discountValue?: number | null;
+
+  @ApiPropertyOptional({
+    example: 100,
+    nullable: true,
+    description: 'Delivery charge. Omit to keep the stored one; only meaningful on a delivery.',
+  })
+  @ValidateIf((o) => o.deliveryCharge !== undefined && o.deliveryCharge !== null)
+  @IsNumber()
+  @Min(0)
+  deliveryCharge?: number | null;
+
+  /** LEGACY. No longer required or printed; accepted so older tills do not 400. */
+  @ApiPropertyOptional({ deprecated: true, description: 'Ignored. Kept for older clients.' })
   @IsOptional()
   @IsString()
   @MaxLength(100)

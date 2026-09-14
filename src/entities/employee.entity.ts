@@ -9,16 +9,17 @@ import {
   JoinColumn,
 } from 'typeorm';
 
-/** Designations that carry behaviour. Restaurant stores are limited to the last three. */
+/** Designations that carry behaviour. Restaurant stores are limited to the last four. */
 export type EmployeeDesignation =
   | 'cashier'
   | 'manager'
   | 'staff'
   | 'waiter'
-  | 'kitchen';
+  | 'kitchen'
+  | 'supervisor';
 
 /** The only designations a restaurant employee may hold. */
-export const RESTAURANT_DESIGNATIONS = ['waiter', 'kitchen', 'cashier'] as const;
+export const RESTAURANT_DESIGNATIONS = ['waiter', 'kitchen', 'cashier', 'supervisor'] as const;
 
 @Entity('employee_details')
 export class Employee {

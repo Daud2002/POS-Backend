@@ -40,9 +40,9 @@ import {
  *
  * Access is by module, not role: an owner always holds `expenses`
  * (owner permissions are derived from the account type), and staff hold it
- * only once the owner ticks it on. Categories are the exception — they stay
- * owner-only via @Roles, because they are the shape of the ledger rather than
- * entries in it.
+ * only once the owner ticks it on. Categories are the exception — they are
+ * the shape of the ledger rather than entries in it, so only an owner or a
+ * supervisor holding the module may change them.
  */
 @ApiTags('Expenses')
 @ApiBearerAuth()
@@ -83,8 +83,9 @@ export class ExpensesController {
   }
 
   @Post('categories')
-  @Roles('store_owner', 'restaurant_owner', 'super_admin')
-  @ApiOperation({ summary: 'Create an expense category (owner only)' })
+  @Roles('store_owner', 'restaurant_owner', 'super_admin', 'supervisor')
+  @RequirePermissions('expenses')
+  @ApiOperation({ summary: 'Create an expense category (owner or supervisor)' })
   @ApiResponse({ status: 409, description: 'A category with that name already exists' })
   async createCategory(@CurrentUser() user: any, @Body() dto: CreateExpenseCategoryDto) {
     const storeId = await this.tenantService.requireStoreId(user);
@@ -92,8 +93,9 @@ export class ExpensesController {
   }
 
   @Patch('categories/:id')
-  @Roles('store_owner', 'restaurant_owner', 'super_admin')
-  @ApiOperation({ summary: 'Rename or retire an expense category (owner only)' })
+  @Roles('store_owner', 'restaurant_owner', 'super_admin', 'supervisor')
+  @RequirePermissions('expenses')
+  @ApiOperation({ summary: 'Rename or retire an expense category (owner or supervisor)' })
   async updateCategory(
     @CurrentUser() user: any,
     @Param('id') id: string,
@@ -104,8 +106,9 @@ export class ExpensesController {
   }
 
   @Delete('categories/:id')
-  @Roles('store_owner', 'restaurant_owner', 'super_admin')
-  @ApiOperation({ summary: 'Delete an expense category (owner only)' })
+  @Roles('store_owner', 'restaurant_owner', 'super_admin', 'supervisor')
+  @RequirePermissions('expenses')
+  @ApiOperation({ summary: 'Delete an expense category (owner or supervisor)' })
   @ApiResponse({ status: 200, description: 'Deleted; its expenses become uncategorized' })
   async removeCategory(@CurrentUser() user: any, @Param('id') id: string) {
     const storeId = await this.tenantService.requireStoreId(user);

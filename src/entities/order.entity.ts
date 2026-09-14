@@ -127,9 +127,12 @@ export class Order {
   customerName: string;
 
   /**
-   * Contact details for takeaway/delivery, captured inline rather than as a
-   * Customer row: `customers` has no storeId, so it is shared across every
-   * tenant and writing walk-in details there leaks them between restaurants.
+   * Contact details for takeaway/delivery, snapshotted onto the order.
+   *
+   * A delivery order with a phone also files (or finds) a store-scoped
+   * Customer row and links it via `customerId`; these columns keep what was
+   * typed at the time, so editing the customer later does not rewrite the
+   * order. Takeaway orders keep them inline only.
    */
   @Column({ nullable: true })
   customerPhone?: string;
@@ -205,11 +208,25 @@ export class Order {
   billPrintedAt?: Date | null;
 
   /**
-   * Who is carrying a delivery order. Captured when the bill is printed and
-   * printed on it, so the paper the rider takes says which rider took it.
+   * LEGACY. The rider prompt was removed from the delivery flow: a bill is
+   * printed the moment the order is punched, long before a rider is chosen.
+   * The column stays because dropping one under `synchronize` is a DROP
+   * COLUMN on deploy, and older mobile builds still send it harmlessly.
    */
   @Column({ type: 'varchar', length: 100, nullable: true })
   riderName?: string | null;
+
+  /**
+   * How many times this bill has been printed. The first print (which, for a
+   * cashier-punched order, happens as it is created) counts as 1; every
+   * reprint after an item change or a lost slip adds one. Surfaced to the
+   * owner as `reprintCount` = billPrintCount - 1, alongside the per-print
+   * rows in `order_events`.
+   *
+   * `default: 0` is load-bearing — see `version` below.
+   */
+  @Column({ type: 'int', default: 0 })
+  billPrintCount: number;
 
   /**
    * PAYMENT status. Exposed to newer clients as `paymentStatus` via a response
@@ -287,6 +304,21 @@ export class Order {
 
   @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
   discountValue?: number;
+
+  /**
+   * Delivery charge, per order. Entered by the cashier when a delivery is
+   * punched (the till suggests a default), and added ON TOP of the discounted
+   * subtotal: `total = max(subtotal - discount, 0) + deliveryCharge`.
+   *
+   * Always 0 on anything that is not a delivery — the rules force it, so a
+   * report can sum this column without checking the type. It is collected
+   * cash but not product revenue, which is why the sales report subtracts it
+   * before computing margin.
+   *
+   * `default: 0` is load-bearing — see `version` below.
+   */
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  deliveryCharge: number;
 
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   total: number;

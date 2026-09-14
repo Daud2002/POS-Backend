@@ -9,6 +9,7 @@ export {
   basePermissionFor,
   grantablePermissionsFor,
   permissionsForAccountType,
+  defaultGrantsFor,
 } from './permissions';
 export type { PermissionKey } from './permissions';
 export { TenantService } from './tenant.service';

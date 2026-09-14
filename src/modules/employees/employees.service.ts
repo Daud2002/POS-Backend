@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Employee, RESTAURANT_DESIGNATIONS } from '@/entities';
 import { User } from '@/entities';
-import { TenantService, toPage, sanitizePermissions, grantablePermissionsFor, basePermissionFor, resolvePermissions, type Page } from '@/common';
+import { TenantService, toPage, sanitizePermissions, grantablePermissionsFor, basePermissionFor, resolvePermissions, defaultGrantsFor, type Page } from '@/common';
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto';
 import * as bcrypt from 'bcrypt';
 
@@ -115,18 +115,20 @@ export class EmployeesService {
   }
 
   /**
-   * Restaurant staff must hold one of the three roles the app routes on;
+   * Restaurant staff must hold one of the four roles the app routes on;
    * anything else would leave them on a screen that does not exist.
    *
    * General stores are deliberately left unvalidated: `designation` has always
    * been a free-text input there, so live rows hold arbitrary titles and a
    * blanket whitelist would make those employees uneditable.
+   *
+   * Returns the store's account type so callers that need it (to seed default
+   * grants) do not fetch the store a second time.
    */
-  private async assertDesignationAllowed(storeId: string, designation?: string) {
-    if (!designation) return;
-
+  private async assertDesignationAllowed(storeId: string, designation?: string): Promise<string> {
     const store = await this.tenantService.getStore(storeId);
-    if (store.accountType !== 'restaurant') return;
+    if (!designation) return store.accountType;
+    if (store.accountType !== 'restaurant') return store.accountType;
 
     const normalized = designation.trim().toLowerCase();
     if (!RESTAURANT_DESIGNATIONS.includes(normalized as any)) {
@@ -134,10 +136,11 @@ export class EmployeesService {
         `A restaurant employee must be one of: ${RESTAURANT_DESIGNATIONS.join(', ')}`,
       );
     }
+    return store.accountType;
   }
 
   async create(storeId: string, createEmployeeDto: CreateEmployeeDto) {
-    await this.assertDesignationAllowed(storeId, createEmployeeDto.designation);
+    const accountType = await this.assertDesignationAllowed(storeId, createEmployeeDto.designation);
 
     // Check if email already exists
     const existingUser = await this.usersRepository.findOne({
@@ -170,11 +173,13 @@ export class EmployeesService {
 
     const savedUser = await this.usersRepository.save(user);
 
-    // Create employee record
+    // Create employee record. A supervisor starts with the ledger already
+    // granted; every other designation starts on its base module alone (NULL).
     const employee = this.employeesRepository.create({
       ...createEmployeeDto,
       storeId,
       userId: savedUser.id,
+      permissions: defaultGrantsFor(accountType, createEmployeeDto.designation),
     });
 
     // Remove password and isActive from the DTO before saving to employee table
@@ -191,7 +196,11 @@ export class EmployeesService {
       throw new BadRequestException(`Employee with ID ${id} not found`);
     }
 
-    await this.assertDesignationAllowed(employee.storeId, updateEmployeeDto.designation);
+    const accountType = await this.assertDesignationAllowed(
+      employee.storeId,
+      updateEmployeeDto.designation,
+    );
+    const previousDesignation = employee.designation;
 
     // If email is being updated, check for conflicts
     if (updateEmployeeDto.email && updateEmployeeDto.email !== employee.email) {
@@ -223,16 +232,24 @@ export class EmployeesService {
 
     Object.assign(employee, updateData);
 
-    // Re-narrow the granted modules against the (possibly new) designation.
-    // Promoting a waiter to cashier, or demoting one, must not leave modules
-    // behind that the new role could never have been given.
-    if (updateEmployeeDto.designation !== undefined && employee.permissions?.length) {
-      const store = await this.tenantService.getStore(employee.storeId);
-      employee.permissions = sanitizePermissions(
-        store.accountType,
-        employee.designation,
-        employee.permissions,
-      );
+    // Re-narrow the granted modules against the new designation, and add the
+    // new role's defaults. Promoting a waiter to cashier, or demoting one,
+    // must not leave modules behind that the new role could never have been
+    // given — and a cashier promoted to supervisor should pick up the ledger
+    // the way a freshly created supervisor would.
+    const designationChanged =
+      updateEmployeeDto.designation !== undefined &&
+      (updateEmployeeDto.designation ?? '').trim().toLowerCase() !==
+        (previousDesignation ?? '').trim().toLowerCase();
+    if (designationChanged) {
+      const merged = [
+        ...(employee.permissions ?? []),
+        ...(defaultGrantsFor(accountType, employee.designation) ?? []),
+      ];
+      const narrowed = sanitizePermissions(accountType, employee.designation, merged);
+      // Keep NULL meaning "never customised" when nothing survives.
+      employee.permissions =
+        narrowed.length || employee.permissions !== null ? narrowed : null;
     }
 
     return await this.employeesRepository.save(employee);

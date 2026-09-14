@@ -39,6 +39,7 @@ describe('resolveEffectiveRole', () => {
       ['waiter', 'waiter'],
       ['kitchen', 'kitchen'],
       ['cashier', 'cashier'],
+      ['supervisor', 'supervisor'],
     ])('maps designation %s to %s', (designation, expected) => {
       expect(
         resolveEffectiveRole({ role: 'employee', accountType: 'restaurant', designation }),

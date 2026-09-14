@@ -55,6 +55,7 @@ export class RestaurantReportsService {
     let revenue = 0;
     let cost = 0;
     let discountTotal = 0;
+    let deliveryChargeTotal = 0;
     let unknownCostLineCount = 0;
     const byProduct = new Map<string, { name: string; quantity: number; revenue: number; profit: number }>();
     const byWaiter = new Map<string, { name: string; orders: number; revenue: number }>();
@@ -65,9 +66,17 @@ export class RestaurantReportsService {
     for (const order of orders) {
       // TypeORM returns Postgres decimals as strings; Number() everywhere or
       // these become string concatenations.
-      const total = Number(order.total) || 0;
+      const deliveryCharge = Number(order.deliveryCharge) || 0;
+      /**
+       * Revenue is what was charged for the FOOD. The delivery charge sits on
+       * top of `total` and is collected cash, but it is not a sale of anything
+       * with a cost against it — counting it would flatter the margin on
+       * every delivery. It is reported on its own line instead.
+       */
+      const total = (Number(order.total) || 0) - deliveryCharge;
       revenue += total;
       discountTotal += Number(order.discount) || 0;
+      deliveryChargeTotal += deliveryCharge;
 
       const type = order.orderType ?? 'none';
       byType[type] ??= { orders: 0, revenue: 0 };
@@ -124,6 +133,8 @@ export class RestaurantReportsService {
       // Discounts are already reflected in `total`, so profit derives from it.
       profit: round2(revenue - cost),
       discountTotal: round2(discountTotal),
+      /** Collected on deliveries, on top of `revenue`. Not part of profit. */
+      deliveryChargeTotal: round2(deliveryChargeTotal),
       averageOrderValue: orders.length ? round2(revenue / orders.length) : 0,
       /**
        * Lines whose product had no cost recorded. Surfaced rather than hidden:

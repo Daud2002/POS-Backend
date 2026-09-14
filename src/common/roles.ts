@@ -14,7 +14,14 @@ export type EffectiveRole =
   | 'restaurant_owner'
   | 'waiter'
   | 'kitchen'
-  | 'cashier';
+  | 'cashier'
+  /**
+   * A cashier who can be trusted with more of the store. Works the till like
+   * a cashier, holds expenses from day one, and may be handed any module the
+   * owner has — everything except staff management, which stays with the
+   * owner because it is where access itself is granted.
+   */
+  | 'supervisor';
 
 /** Effective roles that only exist inside a restaurant tenant. */
 export const RESTAURANT_ROLES: EffectiveRole[] = [
@@ -22,6 +29,7 @@ export const RESTAURANT_ROLES: EffectiveRole[] = [
   'waiter',
   'kitchen',
   'cashier',
+  'supervisor',
 ];
 
 export function resolveEffectiveRole(input: {
@@ -44,6 +52,7 @@ export function resolveEffectiveRole(input: {
     const normalized = (designation ?? '').trim().toLowerCase();
     if (normalized === 'waiter') return 'waiter';
     if (normalized === 'kitchen') return 'kitchen';
+    if (normalized === 'supervisor') return 'supervisor';
   }
 
   // Everything else — including general-store employees with arbitrary

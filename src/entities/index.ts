@@ -18,3 +18,10 @@ export type { CashierShiftStatus } from './cashier-shift.entity';
 export type { TableStatus } from './restaurant-table.entity';
 export type { OrderStatus, RestaurantOrderStatus, OrderType } from './order.entity';
 export { LIVE_ORDER_STATUSES } from './order.entity';
+export { OrderEvent } from './order-event.entity';
+export type {
+  OrderEventType,
+  OrderEventLine,
+  OrderEventTotals,
+  OrderEventPayload,
+} from './order-event.entity';

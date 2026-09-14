@@ -18,6 +18,7 @@ import { EmployeesModule } from './modules/employees/employees.module';
 import { RestaurantModule } from './modules/restaurant/restaurant.module';
 import { ExpensesModule } from './modules/expenses/expenses.module';
 import { ShiftsModule } from './modules/shifts/shifts.module';
+import { ReportsModule } from './modules/reports/reports.module';
 import { RealtimeModule } from './realtime/realtime.module';
 
 @Module({
@@ -45,6 +46,7 @@ import { RealtimeModule } from './realtime/realtime.module';
     RestaurantModule,
     ExpensesModule,
     ShiftsModule,
+    ReportsModule,
   ],
   controllers: [AppController],
   providers: [],

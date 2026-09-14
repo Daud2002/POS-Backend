@@ -12,6 +12,7 @@ import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
+import { defaultGrantsFor } from '../src/common/permissions';
 
 dotenv.config();
 
@@ -21,6 +22,7 @@ const STAFF = [
   { email: 'waiter2@tapntrade.store', password: 'waiter123', name: 'Sara Waiter', designation: 'waiter', employeeId: 'RW-002' },
   { email: 'kitchen@tapntrade.store', password: 'kitchen123', name: 'Head Chef', designation: 'kitchen', employeeId: 'RK-001' },
   { email: 'cash@tapntrade.store', password: 'cashier123', name: 'Front Desk', designation: 'cashier', employeeId: 'RC-001' },
+  { email: 'super@tapntrade.store', password: 'super123', name: 'Shift Lead', designation: 'supervisor', employeeId: 'RS-001' },
 ];
 
 const CATEGORIES = [
@@ -140,6 +142,8 @@ async function main() {
           name: person.name,
           email: person.email,
           designation: person.designation,
+          // The service seeds this on create; the seed bypasses the service.
+          permissions: defaultGrantsFor('restaurant', person.designation),
         }),
       );
       staffCreated += 1;

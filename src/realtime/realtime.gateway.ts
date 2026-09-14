@@ -16,6 +16,12 @@ import { EffectiveRole } from '../common/roles';
 export const RealtimeEvents = {
   orderCreated: 'order:created',
   orderItemsAdded: 'order:items_added',
+  /**
+   * Lines struck off an order the kitchen was still cooking. Payload is
+   * `{ order, removedItems }`, mirroring items_added, so the kitchen prints
+   * a cancellation ticket for exactly those lines.
+   */
+  orderItemsRemoved: 'order:items_removed',
   orderUpdated: 'order:updated',
   tableUpdated: 'table:updated',
   draftUpdated: 'draft:updated',
