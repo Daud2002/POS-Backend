@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, SelectQueryBuilder } from 'typeorm';
 import { Order, OrderItem, Store } from '../../entities';
 import { round2 } from '../../common/discount';
 import { PERIOD_KEYS, periodStarts, type PeriodKey } from '../../common/periods';
@@ -23,6 +23,26 @@ export interface ProfitPeriod {
 export interface ProfitReport {
   tz: string;
   periods: Record<PeriodKey, ProfitPeriod>;
+}
+
+/** One aggregate column: the SQL expression and the name it comes back under. */
+type AggregateColumn = [expression: string, alias: string];
+
+/**
+ * Makes the builder select ONLY these aggregate columns.
+ *
+ * `createQueryBuilder('o')` starts out selecting every column of the entity,
+ * and addSelect() APPENDS to that. An aggregate-only query built with
+ * addSelect alone therefore reaches Postgres as `SELECT "o"."id", …,
+ * COUNT(*)` with no GROUP BY, which it rejects ("column o.id must appear in
+ * the GROUP BY clause"). That 500 is what every dashboard was painting as a
+ * row of zeros under "Profit figures are not available". The first column
+ * goes through select(), which replaces the default list; the rest append.
+ */
+function selectAggregates(qb: SelectQueryBuilder<unknown>, columns: AggregateColumn[]): void {
+  columns.forEach(([expression, alias], i) =>
+    i === 0 ? qb.select(expression, alias) : qb.addSelect(expression, alias),
+  );
 }
 
 /**
@@ -107,18 +127,20 @@ export class ProfitReportService {
       .where('"o"."storeId" = :storeId', { storeId: store.id })
       .andWhere(this.revenuePredicate(store));
 
+    const columns: AggregateColumn[] = [];
     for (const key of PERIOD_KEYS) {
       const from = instants[key];
       const filter = from ? ` FILTER (WHERE ${ProfitReportService.SETTLED_AT} >= :${key})` : '';
       if (from) qb.setParameter(key, from);
-      qb.addSelect(`COUNT("o"."id")${filter}`, `${key}_count`);
+      columns.push([`COUNT("o"."id")${filter}`, `${key}_count`]);
       // Delivery charges are collected cash but not a sale of anything with a
       // cost against it, so they sit outside revenue — as in the sales report.
-      qb.addSelect(
+      columns.push([
         `COALESCE(SUM("o"."total" - COALESCE("o"."deliveryCharge", 0))${filter}, 0)`,
         `${key}_revenue`,
-      );
+      ]);
     }
+    selectAggregates(qb, columns);
 
     const row = (await qb.getRawOne<Record<string, string>>()) ?? {};
     const out = {} as Record<PeriodKey, { orderCount: number; revenue: number }>;
@@ -143,19 +165,21 @@ export class ProfitReportService {
       .where('"o"."storeId" = :storeId', { storeId: store.id })
       .andWhere(this.revenuePredicate(store));
 
+    const columns: AggregateColumn[] = [];
     for (const key of PERIOD_KEYS) {
       const from = instants[key];
       const inWindow = from ? `${ProfitReportService.SETTLED_AT} >= :${key}` : 'TRUE';
       if (from) qb.setParameter(key, from);
-      qb.addSelect(
+      columns.push([
         `COALESCE(SUM(COALESCE("oi"."unitCost", 0) * "oi"."quantity") FILTER (WHERE ${inWindow}), 0)`,
         `${key}_cost`,
-      );
-      qb.addSelect(
+      ]);
+      columns.push([
         `COUNT(*) FILTER (WHERE "oi"."unitCost" IS NULL AND ${inWindow})`,
         `${key}_unknown`,
-      );
+      ]);
     }
+    selectAggregates(qb, columns);
 
     const row = (await qb.getRawOne<Record<string, string>>()) ?? {};
     const out = {} as Record<PeriodKey, { cost: number; unknownCostLineCount: number }>;

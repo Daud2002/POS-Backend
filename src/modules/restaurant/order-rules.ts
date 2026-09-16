@@ -326,6 +326,23 @@ export function shouldReleaseClaim(order: BillClaimable, viewer: BillViewer): bo
 }
 
 /**
+ * Whether this actor's writes leave a row in the order's history.
+ *
+ * Product decision: a SUPERVISOR is the owner's stand-in, and nothing they do
+ * to an order — placing it, adding or striking lines, printing or reprinting
+ * its bill — is something the owner audits. So none of it is recorded. Every
+ * other role is: the history exists to read a disputed bill from top to
+ * bottom, and a waiter's round or a cashier's reprint is what it is for.
+ *
+ * The order row is untouched by this: `billPrintCount` and the totals still
+ * move whoever pressed the button, so the reprint count on the owner's list
+ * stays honest even when no `bill_printed` row was written.
+ */
+export function writesHistory(role?: string | null): boolean {
+  return role !== 'supervisor';
+}
+
+/**
  * Who may have the bill printed as part of creating the order.
  *
  * Printing claims the order for the printer, so a waiter must never do it —

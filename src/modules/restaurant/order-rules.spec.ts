@@ -12,6 +12,7 @@ import {
   shouldReleaseClaim,
   statusAfterRemoval,
   statusAfterRound,
+  writesHistory,
 } from './order-rules';
 
 describe('resolvePayment', () => {
@@ -176,6 +177,21 @@ describe('mayPrintOnCreate', () => {
     expect(mayPrintOnCreate('waiter')).toBe(false);
     expect(mayPrintOnCreate('kitchen')).toBe(false);
     expect(mayPrintOnCreate(null)).toBe(false);
+  });
+});
+
+describe('writesHistory', () => {
+  it('records what waiters, cashiers and owners do', () => {
+    expect(writesHistory('waiter')).toBe(true);
+    expect(writesHistory('cashier')).toBe(true);
+    expect(writesHistory('restaurant_owner')).toBe(true);
+    // A system-originated row has no actor and is still kept.
+    expect(writesHistory(null)).toBe(true);
+    expect(writesHistory(undefined)).toBe(true);
+  });
+
+  it('records nothing a supervisor does — not even placing or printing', () => {
+    expect(writesHistory('supervisor')).toBe(false);
   });
 });
 

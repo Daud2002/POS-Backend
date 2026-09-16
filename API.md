@@ -547,9 +547,10 @@ claimed, and once granted a module reach the owner-only routes behind it
 (table management → `tables`, kitchen status → `kitchen`, the sales and
 profit reports → `dashboard`, expense categories → `expenses`, every
 cashier's drawer → `shifts`). Staff management (`/employees/*`) is never
-delegated. A supervisor's line edits (`items_added`, `items_removed`) write
-**no** history row; their `placed` and `bill_printed` rows are recorded as
-for anyone else.
+delegated. Nothing a supervisor does to an order writes a history row — not
+`placed`, `items_added`, `items_removed` nor `bill_printed`. The order row
+itself still moves (`billPrintCount`, totals), so the reprint count on the
+owner's list is unaffected.
 
 ### Cashier Shifts
 

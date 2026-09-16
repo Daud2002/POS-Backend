@@ -268,17 +268,26 @@ export class ExpensesService {
       .createQueryBuilder('expense')
       .where('expense.storeId = :storeId', { storeId });
 
+    /**
+     * The FIRST column goes through select(), which REPLACES the builder's
+     * default `SELECT expense.*`; the rest append. With addSelect alone the
+     * entity columns stay in the list and Postgres refuses the aggregate:
+     * "column expense.id must appear in the GROUP BY clause". That 500 took
+     * the whole profit report down for anyone holding the expenses module.
+     */
     const keys = Object.keys(starts) as K[];
     keys.forEach((key, index) => {
       const from = starts[key];
+      const pick = index === 0 ? qb.select.bind(qb) : qb.addSelect.bind(qb);
       if (from === null) {
-        qb.addSelect('COALESCE(SUM("expense"."amount"), 0)', key);
+        pick('COALESCE(SUM("expense"."amount"), 0)', key);
       } else {
         const param = `from${index}`;
-        qb.addSelect(
+        pick(
           `COALESCE(SUM("expense"."amount") FILTER (WHERE "expense"."expenseDate" >= :${param}), 0)`,
           key,
-        ).setParameter(param, from);
+        );
+        qb.setParameter(param, from);
       }
     });
 

@@ -53,6 +53,7 @@ import {
   shouldReleaseClaim,
   statusAfterRemoval,
   statusAfterRound,
+  writesHistory,
   type ResolvedTotals,
 } from './order-rules';
 
@@ -99,16 +100,6 @@ const KITCHEN_TRANSITIONS: Record<string, RestaurantOrderStatus[]> = {
   requested: ['preparing', 'handed_over'],
   preparing: ['handed_over'],
 };
-
-/**
- * History rows a SUPERVISOR's action does not write.
- *
- * Only the edits: a supervisor striking a line or adding a round is a
- * correction, not something the owner audits. Placing an order and printing
- * its bill are still recorded whoever did them, so every order keeps its
- * first row and its print count.
- */
-const SUPERVISOR_SILENT_EVENTS: OrderEventType[] = ['items_added', 'items_removed'];
 
 /**
  * Belt-and-braces translation of the double-booking invariant.
@@ -1076,15 +1067,8 @@ export class RestaurantOrdersService {
     payload: OrderEventPayload,
     at: Date,
   ): Promise<void> {
-    /**
-     * A supervisor's corrections are not history. Product decision: the
-     * supervisor is the owner's stand-in, and when they strike a line or add
-     * one it is a fix, not a change the owner needs to audit. The order itself
-     * still records that it was placed and printed, whoever did it.
-     */
-    if (actor?.role === 'supervisor' && SUPERVISOR_SILENT_EVENTS.includes(type)) {
-      return;
-    }
+    // A supervisor's actions are not history — see writesHistory().
+    if (!writesHistory(actor?.role)) return;
 
     await manager.insert(OrderEvent, {
       orderId: order.id,
