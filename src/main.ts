@@ -15,7 +15,8 @@ async function bootstrap() {
     'http://localhost:8080',
     'http://localhost:8081',
     'http://localhost:3000',
-    'https://tapntrade.store'
+    'https://tapntrade.store',
+    'https://pos.tapntrade.store'
   ];
 
   app.enableCors({
