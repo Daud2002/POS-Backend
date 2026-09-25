@@ -18,11 +18,12 @@ describe('resolvePermissions', () => {
     it('gives a restaurant owner the restaurant modules and no general-only ones', () => {
       const granted = resolvePermissions({ role: 'store_owner', accountType: 'restaurant' });
       expect(granted).toEqual(
-        expect.arrayContaining(['dashboard', 'expenses', 'tables', 'cashier', 'customers', 'shifts']),
+        expect.arrayContaining([
+          'dashboard', 'expenses', 'tables', 'cashier', 'customers', 'shifts', 'inventory',
+        ]),
       );
-      // POS/inventory have no restaurant screens behind them.
+      // The retail POS has no restaurant screen behind it.
       expect(granted).not.toContain('pos');
-      expect(granted).not.toContain('inventory');
     });
 
     it('gives a general store owner the general modules and no restaurant-only ones', () => {
@@ -196,9 +197,9 @@ describe('resolvePermissions', () => {
 
 describe('basePermissionFor / grantablePermissionsFor', () => {
   it('never lets kitchen or waiting staff be offered the till or the menu', () => {
-    for (const designation of ['kitchen', 'waiter']) {
-      expect(grantablePermissionsFor('restaurant', designation)).toEqual(['expenses']);
-    }
+    // The kitchen may keep the stock count; a waiter only the ledger.
+    expect(grantablePermissionsFor('restaurant', 'kitchen')).toEqual(['expenses', 'inventory']);
+    expect(grantablePermissionsFor('restaurant', 'waiter')).toEqual(['expenses']);
   });
 
   it('offers a restaurant cashier the wider set', () => {
@@ -209,6 +210,7 @@ describe('basePermissionFor / grantablePermissionsFor', () => {
       'products',
       'orders',
       'customers',
+      'inventory',
     ]);
   });
 
@@ -231,13 +233,12 @@ describe('basePermissionFor / grantablePermissionsFor', () => {
     expect(grantable).toEqual(
       expect.arrayContaining([
         'dashboard', 'expenses', 'kitchen', 'tables', 'products', 'categories', 'orders',
-        'customers', 'shifts',
+        'customers', 'shifts', 'inventory',
       ]),
     );
     expect(grantable).not.toContain('cashier');
     // Never a general-only module.
     expect(grantable).not.toContain('pos');
-    expect(grantable).not.toContain('inventory');
   });
 
   it('treats an unrecognised restaurant designation as a cashier throughout', () => {

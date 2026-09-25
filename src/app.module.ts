@@ -3,7 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { typeormConfig } from './database/typeorm.config';
-import { User, Category, Product, Customer, Order, OrderItem, Store, Employee, RefreshToken, RestaurantTable, Expense, ExpenseCategory, CashierShift } from './entities';
+import { User, Category, Product, Customer, Order, OrderItem, Store, Employee, RefreshToken, RestaurantTable, Expense, ExpenseCategory, CashierShift, InventoryItem, InventoryMovement, ProductIngredient } from './entities';
 import { AuthModule } from './auth/auth.module';
 import { CommonModule } from './common/common.module';
 import { AppController } from './app.controller';
@@ -19,6 +19,7 @@ import { RestaurantModule } from './modules/restaurant/restaurant.module';
 import { ExpensesModule } from './modules/expenses/expenses.module';
 import { ShiftsModule } from './modules/shifts/shifts.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { InventoryModule } from './modules/inventory/inventory.module';
 import { RealtimeModule } from './realtime/realtime.module';
 
 @Module({
@@ -31,7 +32,7 @@ import { RealtimeModule } from './realtime/realtime.module';
     // restaurant's order number back to 1 each morning.
     ScheduleModule.forRoot(),
     TypeOrmModule.forRoot(typeormConfig()),
-    TypeOrmModule.forFeature([User, Category, Product, Customer, Order, OrderItem, Store, Employee, RefreshToken, RestaurantTable, Expense, ExpenseCategory, CashierShift]),
+    TypeOrmModule.forFeature([User, Category, Product, Customer, Order, OrderItem, Store, Employee, RefreshToken, RestaurantTable, Expense, ExpenseCategory, CashierShift, InventoryItem, InventoryMovement, ProductIngredient]),
     CommonModule,
     AuthModule,
     ProductsModule,
@@ -47,6 +48,7 @@ import { RealtimeModule } from './realtime/realtime.module';
     ExpensesModule,
     ShiftsModule,
     ReportsModule,
+    InventoryModule,
   ],
   controllers: [AppController],
   providers: [],

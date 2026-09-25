@@ -33,6 +33,7 @@ import {
 import { TablesService } from './tables.service';
 import { ShiftsService } from '../shifts/shifts.service';
 import { CustomersService } from '../customers/customers.service';
+import { InventoryService } from '../inventory/inventory.service';
 import { normalizePhone } from '../../common/phone';
 import { RealtimeGateway, RealtimeEvents } from '../../realtime/realtime.gateway';
 import { generateOrderNumber } from '../../common/order-number';
@@ -145,6 +146,7 @@ export class RestaurantOrdersService {
     private tablesService: TablesService,
     private shiftsService: ShiftsService,
     private customersService: CustomersService,
+    private inventoryService: InventoryService,
     private realtime: RealtimeGateway,
     private dataSource: DataSource,
   ) {}
@@ -959,7 +961,7 @@ export class RestaurantOrdersService {
     // record who settled, so turning the flag on later has history to show.
     const enforceShift = await this.shiftsService.isEnforced(storeId);
 
-    await this.dataSource.transaction(async (manager) => {
+    const consumed = await this.dataSource.transaction(async (manager) => {
       /**
        * Resolved INSIDE the transaction, and it takes a share lock on the
        * shift row. That lock is what makes closing a drawer safe: close()
@@ -993,11 +995,23 @@ export class RestaurantOrdersService {
       if (existing.tableId) {
         await this.tablesService.release(manager, existing.tableId, storeId);
       }
+
+      // Paid is the moment the ingredients are gone. On this transaction so
+      // stock and payment move together; it never refuses, so a stale stock
+      // sheet cannot stop a customer paying.
+      return this.inventoryService.consumeForOrder(
+        manager,
+        storeId,
+        id,
+        existing.items ?? [],
+        viewer.userId,
+      );
     });
 
     const order = await this.findOne(id, storeId);
     this.realtime.emitToStore(storeId, RealtimeEvents.orderUpdated, order);
     if (existing.tableId) await this.emitTable(storeId, existing.tableId);
+    this.inventoryService.emit(storeId, consumed);
     return order;
   }
 
@@ -1158,10 +1172,11 @@ export class RestaurantOrdersService {
         productName: product.name,
         quantity: item.quantity,
         unitPrice,
-        // costPrice is nullable on legacy rows; 0 keeps the arithmetic valid and
-        // the report separately counts how many lines had unknown cost.
+        // NULL (not 0) when the dish has no cost recorded — the same rule as
+        // the general POS — so the profit report counts the lines it could
+        // not price instead of silently treating them as free.
         unitCost: product.costPrice === null || product.costPrice === undefined
-          ? 0
+          ? null
           : Number(product.costPrice),
         subtotal: lineTotal,
         discount: 0,

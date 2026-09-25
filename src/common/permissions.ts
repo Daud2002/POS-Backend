@@ -51,7 +51,9 @@ export const ALL_PERMISSIONS: PermissionKey[] = [
  *
  * `customers` is here as well as on general tenants: a restaurant's delivery
  * orders file their customers into the same directory, so the owner needs a
- * screen to manage them.
+ * screen to manage them. `inventory` is too, but behind a different screen:
+ * a restaurant tracks ingredients (ml, g, bottles) consumed by recipes, not
+ * whole-unit product stock.
  */
 const RESTAURANT_MODULES: PermissionKey[] = [
   'dashboard',
@@ -64,6 +66,7 @@ const RESTAURANT_MODULES: PermissionKey[] = [
   'orders',
   'customers',
   'shifts',
+  'inventory',
 ];
 
 /** Modules that only exist on a general tenant. */
@@ -114,8 +117,10 @@ const GENERAL_BASE: PermissionKey = 'pos';
  * is gated on the owner role), so it can never be delegated this way.
  */
 const RESTAURANT_GRANTABLE: Record<string, PermissionKey[]> = {
-  cashier: ['expenses', 'tables', 'categories', 'products', 'orders', 'customers'],
-  kitchen: ['expenses'],
+  cashier: ['expenses', 'tables', 'categories', 'products', 'orders', 'customers', 'inventory'],
+  // The kitchen is who notices the milk running out, so it may be trusted
+  // with the stock count.
+  kitchen: ['expenses', 'inventory'],
   waiter: ['expenses'],
   supervisor: RESTAURANT_MODULES.filter((p) => p !== RESTAURANT_BASE.supervisor),
 };

@@ -32,6 +32,12 @@ export const RealtimeEvents = {
   shiftOpened: 'shift:opened',
   shiftClosed: 'shift:closed',
   shiftCollected: 'shift:collected',
+  /**
+   * Ingredient counts moved — a stock-in, a correction, or a settled order
+   * consuming its recipes. Payload is `{ itemIds }`; clients refetch rather
+   * than trusting counts pushed over the socket.
+   */
+  inventoryUpdated: 'inventory:updated',
 } as const;
 
 /**

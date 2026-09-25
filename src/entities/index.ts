@@ -25,3 +25,8 @@ export type {
   OrderEventTotals,
   OrderEventPayload,
 } from './order-event.entity';
+export { InventoryItem, INVENTORY_UNITS } from './inventory-item.entity';
+export type { InventoryUnit } from './inventory-item.entity';
+export { ProductIngredient } from './product-ingredient.entity';
+export { InventoryMovement, INVENTORY_MOVEMENT_TYPES } from './inventory-movement.entity';
+export type { InventoryMovementType } from './inventory-movement.entity';

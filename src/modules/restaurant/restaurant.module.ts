@@ -17,6 +17,7 @@ import { OrderSequenceResetService } from './order-sequence-reset.service';
 import { RealtimeModule } from '../../realtime/realtime.module';
 import { ShiftsModule } from '../shifts/shifts.module';
 import { CustomersModule } from '../customers/customers.module';
+import { InventoryModule } from '../inventory/inventory.module';
 
 @Module({
   imports: [
@@ -34,6 +35,8 @@ import { CustomersModule } from '../customers/customers.module';
     ShiftsModule,
     // A delivery order files its customer into the store's directory.
     CustomersModule,
+    // Settling an order draws its recipes' ingredients out of stock.
+    InventoryModule,
   ],
   controllers: [RestaurantController],
   providers: [
