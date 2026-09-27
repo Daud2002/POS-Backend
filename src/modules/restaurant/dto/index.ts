@@ -57,7 +57,7 @@ export class RestaurantOrderItemDto {
    */
   @ApiPropertyOptional({
     example: false,
-    description: 'Pack this line to go. Only meaningful on a dine_out order.',
+    description: 'Pack this line to go as a parcel. Any parcel line makes a table order dine_out.',
   })
   @IsOptional()
   @IsBoolean()
@@ -68,7 +68,7 @@ export class CreateRestaurantOrderDto {
   @ApiProperty({
     enum: ['dine_in', 'dine_out', 'takeaway', 'delivery'],
     description:
-      'dine_out = eating in AND taking a parcel home; it occupies a table like dine_in.',
+      'dine_out = a table order with one or more parcel lines (shown to people as Parcel or Dine-in + Parcel); it occupies a table like dine_in. Derived from the lines server-side.',
   })
   @IsIn(['dine_in', 'dine_out', 'takeaway', 'delivery'])
   orderType: 'dine_in' | 'dine_out' | 'takeaway' | 'delivery';
