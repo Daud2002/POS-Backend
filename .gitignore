@@ -51,3 +51,6 @@ node_modules
 
 # Uploaded tenant assets (store logos). Runtime data, not source.
 uploads
+
+# Row snapshots written by scripts/clear-*.ts before they delete. Production data.
+backups

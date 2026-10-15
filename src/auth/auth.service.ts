@@ -30,6 +30,31 @@ export class AuthService {
     return null;
   }
 
+  /**
+   * Why this user may not hold a session, or null when they may.
+   *
+   * A store has no status column of its own: the super-admin "deactivate
+   * store" toggle flips its OWNER's account. Staff therefore inherit it from
+   * the owner here — checking only their own flag left every waiter, cashier
+   * and kitchen screen running after their store was switched off.
+   *
+   * Runs on every authenticated request (JwtStrategy), so it stays one query.
+   */
+  async inactiveReason(user: Pick<User, 'id' | 'role' | 'isActive'>): Promise<string | null> {
+    if (!user.isActive) return 'Your account is inactive.';
+    if (user.role !== 'employee' && user.role !== 'cashier') return null;
+
+    const storeInactive = await this.employeesRepository
+      .createQueryBuilder('employee')
+      .innerJoin('employee.store', 'store')
+      .innerJoin('store.owner', 'owner')
+      .where('employee.userId = :userId', { userId: user.id })
+      .andWhere('owner.isActive = false')
+      .getExists();
+
+    return storeInactive ? 'This store has been deactivated.' : null;
+  }
+
   async getUserWithStore(user: any) {
     let storeId: string | undefined;
     let storeName: string | undefined;
@@ -124,7 +149,7 @@ export class AuthService {
   /**
    * Exchanges a refresh token for a new access token, rotating the refresh
    * token in the process. Re-reads the user each time so a deactivated account
-   * cannot keep refreshing its way into the app.
+   * — or anyone on a deactivated store — cannot keep refreshing its way in.
    */
   async refresh(refreshToken: string, userAgent?: string) {
     const { token, userId } = await this.refreshTokenService.rotate(
@@ -133,9 +158,10 @@ export class AuthService {
     );
 
     const user = await this.usersRepository.findOne({ where: { id: userId } });
-    if (!user || !user.isActive) {
+    const inactive = user ? await this.inactiveReason(user) : 'Account is no longer active';
+    if (!user || inactive) {
       await this.refreshTokenService.revokeAllForUser(userId);
-      throw new UnauthorizedException('Account is no longer active');
+      throw new UnauthorizedException(inactive);
     }
 
     const payload = { email: user.email, sub: user.id, role: user.role };

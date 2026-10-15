@@ -38,6 +38,12 @@ export const RealtimeEvents = {
    * than trusting counts pushed over the socket.
    */
   inventoryUpdated: 'inventory:updated',
+  /**
+   * The account, or its whole store, was deactivated. Sent just before the
+   * server drops the socket so the client signs out at once instead of
+   * waiting for its next request to bounce.
+   */
+  sessionRevoked: 'session:revoked',
 } as const;
 
 /**
@@ -85,7 +91,9 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
 
       const payload = this.jwtService.verify(token);
       const user = await this.usersRepository.findOne({ where: { id: payload.sub } });
-      if (!user || !user.isActive) return this.reject(client, 'inactive user');
+      if (!user || (await this.authService.inactiveReason(user))) {
+        return this.reject(client, 'inactive user');
+      }
 
       const profile = await this.authService.getUserWithStore(user);
       if (!profile.storeId) return this.reject(client, 'no store');
@@ -140,12 +148,21 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     }
   }
 
-  /** Drops live sockets for a user, e.g. on deactivation or logout-everywhere. */
-  async disconnectUser(userId: string) {
-    if (!this.server) return;
+  /**
+   * Signs these users' live screens out, e.g. when they or their store are
+   * deactivated.
+   *
+   * The event goes out before the disconnect so the client can tell a
+   * revocation from an ordinary drop, which it would otherwise just retry.
+   */
+  async signOutUsers(userIds: string[]) {
+    if (!this.server || !userIds.length) return;
+    const targets = new Set(userIds);
     const sockets = await this.server.fetchSockets();
     for (const socket of sockets) {
-      if (socket.data.userId === userId) socket.disconnect(true);
+      if (!targets.has(socket.data.userId)) continue;
+      socket.emit(RealtimeEvents.sessionRevoked);
+      socket.disconnect(true);
     }
   }
 }

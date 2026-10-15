@@ -55,7 +55,9 @@ export class ProductsController {
     return this.productsService.create(createProductDto, storeId);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get()
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all products for store' })
   @ApiQuery({ name: 'storeId', required: true, type: String })
   @ApiQuery({ name: 'skip', required: false, type: Number })
@@ -98,7 +100,9 @@ export class ProductsController {
     return this.productsService.findActive(storeId, paging.skip, paging.take);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get(':id')
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Get product by ID' })
   @ApiResponse({ status: 200, description: 'Product found' })
   @ApiResponse({ status: 404, description: 'Product not found' })
@@ -130,7 +134,9 @@ export class ProductsController {
     return this.productsService.remove(id, storeId);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get('category/:categoryId')
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Get products by category' })
   @ApiQuery({ name: 'storeId', required: true, type: String })
   findByCategory(@Param('categoryId') categoryId: string, @Query('storeId') storeId?: string) {

@@ -2,15 +2,22 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from '../../entities/user.entity';
+import { Employee } from '../../entities/employee.entity';
 import { CreateUserDto, UpdateUserDto, UserRole } from './dto';
 import * as bcrypt from 'bcrypt';
 import { toPage, type Page } from '../../common/pagination';
+import { RefreshTokenService } from '../../auth/refresh-token.service';
+import { RealtimeGateway } from '../../realtime/realtime.gateway';
 
 @Injectable()
 export class UsersService {
   constructor(
     @InjectRepository(User)
     private usersRepository: Repository<User>,
+    @InjectRepository(Employee)
+    private employeesRepository: Repository<Employee>,
+    private refreshTokenService: RefreshTokenService,
+    private realtime: RealtimeGateway,
   ) {}
 
   /** Strips the credential before a user ever reaches a response body. */
@@ -60,7 +67,32 @@ export class UsersService {
       updateData.passwordHash = await bcrypt.hash(password, 10);
     }
     await this.usersRepository.update(id, updateData);
+    if (rest.isActive === false) {
+      await this.endSessions(id);
+    }
     return this.findOne(id);
+  }
+
+  /**
+   * Signs a deactivated account out everywhere and, for a store owner, every
+   * member of their staff with it — deactivating the owner is how the
+   * dashboard deactivates a store.
+   *
+   * The auth checks would refuse these sessions on their next request anyway.
+   * This makes it immediate, and revoking the refresh tokens means
+   * reactivating the store later does not quietly revive old sessions.
+   */
+  private async endSessions(userId: string) {
+    const staff = await this.employeesRepository
+      .createQueryBuilder('employee')
+      .innerJoin('employee.store', 'store')
+      .where('store.userId = :userId', { userId })
+      .select('employee.userId', 'userId')
+      .getRawMany<{ userId: string | null }>();
+
+    const userIds = [userId, ...staff.map((row) => row.userId).filter((id): id is string => !!id)];
+    await this.refreshTokenService.revokeAllForUsers(userIds);
+    await this.realtime.signOutUsers(userIds);
   }
 
   async remove(id: string) {

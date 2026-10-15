@@ -6,6 +6,8 @@ import { User } from '@/entities';
 import { TenantService, toPage, sanitizePermissions, grantablePermissionsFor, basePermissionFor, resolvePermissions, defaultGrantsFor, type Page } from '@/common';
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto';
 import * as bcrypt from 'bcrypt';
+import { RefreshTokenService } from '@/auth/refresh-token.service';
+import { RealtimeGateway } from '@/realtime/realtime.gateway';
 
 @Injectable()
 export class EmployeesService {
@@ -15,6 +17,8 @@ export class EmployeesService {
     @InjectRepository(User)
     private usersRepository: Repository<User>,
     private tenantService: TenantService,
+    private refreshTokenService: RefreshTokenService,
+    private realtime: RealtimeGateway,
   ) {}
 
   async findAll(storeId: string, skip = 0, take = 10) {
@@ -225,6 +229,11 @@ export class EmployeesService {
       await this.usersRepository.update(employee.userId, {
         isActive: updateEmployeeDto.isActive,
       });
+      // Sign them out now rather than when their next request bounces.
+      if (updateEmployeeDto.isActive === false) {
+        await this.refreshTokenService.revokeAllForUser(employee.userId);
+        await this.realtime.signOutUsers([employee.userId]);
+      }
     }
 
     // Update employee record (exclude password from employee table update)

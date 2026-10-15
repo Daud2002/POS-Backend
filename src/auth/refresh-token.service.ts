@@ -1,6 +1,6 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, LessThan, Repository } from 'typeorm';
+import { In, IsNull, LessThan, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes, randomUUID, createHash } from 'crypto';
 import { RefreshToken } from '../entities';
@@ -131,8 +131,14 @@ export class RefreshTokenService {
 
   /** Used when an account is deactivated or its password changes. */
   async revokeAllForUser(userId: string): Promise<void> {
+    await this.revokeAllForUsers([userId]);
+  }
+
+  /** Signs a whole store out at once when it is deactivated. */
+  async revokeAllForUsers(userIds: string[]): Promise<void> {
+    if (!userIds.length) return;
     await this.refreshTokensRepository.update(
-      { userId, revokedAt: IsNull() },
+      { userId: In(userIds), revokedAt: IsNull() },
       { revokedAt: new Date() },
     );
   }

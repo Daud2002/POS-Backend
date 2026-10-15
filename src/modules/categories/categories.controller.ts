@@ -55,7 +55,9 @@ export class CategoriesController {
     return this.categoriesService.create(createCategoryDto, storeId);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get()
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all categories for store' })
   @ApiQuery({ name: 'skip', required: false, type: Number })
   @ApiQuery({ name: 'take', required: false, type: Number })
@@ -78,7 +80,9 @@ export class CategoriesController {
     return this.categoriesService.findAll(storeId, paging.skip, paging.take);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get(':id')
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Get category by ID' })
   @ApiResponse({ status: 200, description: 'Category found' })
   findOne(@Param('id') id: string) {

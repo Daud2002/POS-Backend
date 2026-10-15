@@ -43,8 +43,9 @@ export class AuthController {
     if (!user) {
       throw new BadRequestException('Invalid credentials');
     }
-    if (!user.isActive) {
-      throw new BadRequestException('Your account is inactive.');
+    const inactive = await this.authService.inactiveReason(user);
+    if (inactive) {
+      throw new BadRequestException(inactive);
     }
     return this.authService.login(user, req.headers['user-agent']);
   }
