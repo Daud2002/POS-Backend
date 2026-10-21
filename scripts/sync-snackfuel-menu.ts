@@ -9,15 +9,15 @@ import { typeormConfig } from '../src/database/typeorm.config';
 import * as entities from '../src/entities';
 import { Category, Product } from '../src/entities';
 import {
+  COSTED_ITEMS,
   COST_RATIO,
   MENU,
-  RENAMES,
   SNACKFUEL_STORE_ID,
   TOTAL_ITEMS,
-  legacyName,
-  round2,
+  costOf,
+  findProduct,
+  norm,
   type Group,
-  type Item,
 } from './snackfuel-menu';
 
 /**
@@ -35,7 +35,8 @@ const ALL_ENTITIES = (Object.values(entities) as unknown[]).filter(
  * For every category and product in ./snackfuel-menu.ts, matched by name:
  *   - sets the icon and the sort number (categories 1..N, products 1..M, in
  *     menu order — the order the till shows them in);
- *   - sets costPrice = price × COST_RATIO;
+ *   - sets costPrice to the menu's costing; an item the menu does not cost
+ *     keeps the cost it has, and only a row with none gets price × COST_RATIO;
  *   - renames rows the menu now calls something else ("Tikka (Small)" →
  *     "Tikka (S)", "NR Bottle" → "NR Coke") IN PLACE, so the row and every
  *     order line that references it survive;
@@ -50,8 +51,6 @@ const ALL_ENTITIES = (Object.values(entities) as unknown[]).filter(
  *
  * Safe to re-run: a second pass finds nothing left to change.
  */
-
-const norm = (name: string) => name.trim().toLowerCase();
 
 interface ProductPlan {
   id: string | null; // null = create
@@ -72,19 +71,6 @@ interface CategoryPlan {
   name: string;
   icon: string;
   sortOrder: number;
-}
-
-/** Finds the row for a menu item under its current name, its old size label, or its old name. */
-function findProduct(rows: Product[], item: Item): Product | undefined {
-  const candidates = [item.name, legacyName(item.name)];
-  for (const [oldName, newName] of Object.entries(RENAMES)) {
-    if (newName === item.name) candidates.push(oldName);
-  }
-  for (const candidate of candidates) {
-    const hit = rows.find((p) => norm(p.name) === norm(candidate));
-    if (hit) return hit;
-  }
-  return undefined;
 }
 
 async function main() {
@@ -162,7 +148,12 @@ async function main() {
           // Never change a price. A new row takes the menu price, obviously.
           price: row ? currentPrice! : item.price,
           currentPrice,
-          costPrice: round2((row ? currentPrice! : item.price) * COST_RATIO),
+          // The menu's costing wins; without one, never clobber a cost
+          // someone entered by hand with the ratio guess.
+          costPrice:
+            item.cost === undefined && row?.costPrice != null
+              ? Number(row.costPrice)
+              : costOf(item, row ? currentPrice! : item.price),
           icon: item.icon,
           sortOrder: productSort,
           description: item.description,
@@ -272,7 +263,8 @@ async function main() {
 
     console.log(
       `\n✅ Synced ${categoryPlans.length} categories and ${productPlans.length} products ` +
-        `(${renames.length} renamed, ${creates.length} created); cost set to ${Math.round(COST_RATIO * 100)}% of price.\n`,
+        `(${renames.length} renamed, ${creates.length} created); ${COSTED_ITEMS} costs from the menu, ` +
+        `the rest kept or set to ${Math.round(COST_RATIO * 100)}% of price.\n`,
     );
   } finally {
     await connection.close();

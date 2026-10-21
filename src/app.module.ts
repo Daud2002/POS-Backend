@@ -21,6 +21,7 @@ import { ShiftsModule } from './modules/shifts/shifts.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { RealtimeModule } from './realtime/realtime.module';
+import { PrintingModule } from './modules/printing/printing.module';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { RealtimeModule } from './realtime/realtime.module';
     ShiftsModule,
     ReportsModule,
     InventoryModule,
+    PrintingModule,
   ],
   controllers: [AppController],
   providers: [],

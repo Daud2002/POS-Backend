@@ -54,3 +54,7 @@ uploads
 
 # Row snapshots written by scripts/clear-*.ts before they delete. Production data.
 backups
+
+# QZ Tray signing keys. The .crt files beside them are public and stay tracked;
+# the root key is kept offline and the signing key lives in the server's env.
+qz-tray/*.key

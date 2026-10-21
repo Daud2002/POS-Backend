@@ -38,7 +38,8 @@
     "verify:search": "node scripts/verify-search.mjs",
     "db:backfill-customer-store": "ts-node scripts/backfill-customer-store.ts",
     "db:sync-snackfuel": "ts-node scripts/sync-snackfuel-menu.ts",
-    "db:clear-snackfuel": "ts-node scripts/clear-snackfuel.ts"
+    "db:clear-snackfuel": "ts-node scripts/clear-snackfuel.ts",
+    "db:update-snackfuel-costs": "ts-node scripts/update-snackfuel-costs.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.3.0",

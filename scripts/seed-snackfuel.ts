@@ -9,15 +9,22 @@
  * `npm run db:sync-snackfuel` instead.
  *
  * The menu itself — names, prices, icons and the order the till shows them
- * in — lives in ./snackfuel-menu.ts. Cost prices are seeded at COST_RATIO of
- * the selling price: the printed menu carries no cost data, so this is a
- * placeholder for the owner dashboard, not real costing.
+ * in — lives in ./snackfuel-menu.ts, and so do the cost prices: the owner's
+ * costing where the menu has it, COST_RATIO of the selling price for any item
+ * added without one.
  */
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
-import { COST_RATIO, MENU, SNACKFUEL_STORE_ID, TOTAL_ITEMS, round2 } from './snackfuel-menu';
+import {
+  COSTED_ITEMS,
+  COST_RATIO,
+  MENU,
+  SNACKFUEL_STORE_ID,
+  TOTAL_ITEMS,
+  costOf,
+} from './snackfuel-menu';
 
 dotenv.config();
 
@@ -113,8 +120,7 @@ async function main() {
             item.name,
             item.description ?? null,
             item.price,
-            // Placeholder costing: the menu carries no cost data.
-            round2(item.price * COST_RATIO),
+            costOf(item),
             item.icon,
             productSort,
             // Restaurant products do not track stock.
@@ -128,7 +134,10 @@ async function main() {
 
   console.log(`\n✨ Done — ${MENU.length} categories, ${TOTAL_ITEMS} products, icons and sort order set.`);
   const pct = (n: number) => Math.round(n * 100);
-  console.log(`   Cost price seeded at ${pct(COST_RATIO)}% of selling price (${pct(1 - COST_RATIO)}% margin).`);
+  console.log(
+    `   Cost price seeded from the owner's costing for ${COSTED_ITEMS} products; ` +
+      `the other ${TOTAL_ITEMS - COSTED_ITEMS} at ${pct(COST_RATIO)}% of selling price.`,
+  );
 
   await dataSource.destroy();
 }
