@@ -134,6 +134,24 @@ function monthsBack(year: number, month: number, day: number, n: number) {
   return { year: y, month: m, day: Math.min(day, daysInMonth(y, m)) };
 }
 
+/** The calendar day in `tz` at `now`, as 'YYYY-MM-DD'. */
+export function todayInZone(now: Date, tz: string | null | undefined): string {
+  const { year, month, day } = wallClockAt(now, resolveTimeZone(tz));
+  return dayString(year, month, day);
+}
+
+/**
+ * Local midnight on the 1st of the month `n` months before the one containing
+ * `now`, in `tz`. `n = 0` is the start of the current month; `n = 11` is the
+ * lower bound of a "last twelve months" chart.
+ */
+export function zonedMonthStart(now: Date, tz: string | null | undefined, n = 0): Date {
+  const zone = resolveTimeZone(tz);
+  const { year, month } = wallClockAt(now, zone);
+  const back = monthsBack(year, month, 1, n);
+  return zonedMidnight(back.year, back.month, 1, zone);
+}
+
 export function periodStarts(now: Date, tz: string | null | undefined): PeriodStarts {
   const zone = resolveTimeZone(tz);
   const { year, month, day } = wallClockAt(now, zone);

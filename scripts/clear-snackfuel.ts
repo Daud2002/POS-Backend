@@ -5,10 +5,17 @@
  *   npm run db:clear-snackfuel                 # dry run: prints counts, writes nothing
  *   npm run db:clear-snackfuel -- --apply      # deletes
  *   npm run db:clear-snackfuel -- --store=<uuid>
+ *   npm run db:clear-snackfuel -- --keep-expenses    # leave the expense ledger alone
+ *   npm run db:clear-snackfuel -- --keep-inventory   # leave ingredients and recipes alone
+ *   npm run db:clear-snackfuel -- --keep-customers   # leave the customer phone book alone
+ *   npm run db:clear-snackfuel -- --only-expenses    # ONLY the expense ledger, nothing else
  *
  * DELETED, this store only:
- *   orders, order_items, order_events, cashier_shifts, expenses,
- *   inventory_movements, product_ingredients, inventory_items, customers.
+ *   orders, order_items, order_events, cashier_shifts, inventory_movements;
+ *   plus customers unless --keep-customers, expenses unless --keep-expenses,
+ *   and product_ingredients + inventory_items unless --keep-inventory
+ *   (stock-in/consumption history goes either way; the items keep their
+ *   current quantities).
  * RESET, rows kept:
  *   stores.orderSequence -> 0 (next order prints as #1),
  *   restaurant_tables    -> free, no current order.
@@ -35,6 +42,22 @@ import { SNACKFUEL_STORE_ID } from './snackfuel-menu';
 dotenv.config();
 
 const APPLY = process.argv.includes('--apply');
+/** The ledger is bookkeeping, not till activity; an owner may want it to survive a reset. */
+const KEEP_EXPENSES = process.argv.includes('--keep-expenses');
+/** Ingredients and recipes are configuration an owner typed in by hand. */
+const KEEP_INVENTORY = process.argv.includes('--keep-inventory');
+/** The phone book of delivery customers, which some owners want to outlive their orders. */
+const KEEP_CUSTOMERS = process.argv.includes('--keep-customers');
+/**
+ * Only the expense ledger, nothing else — for the case where a wipe was run
+ * with --keep-expenses and the owner then changed their mind. Re-running the
+ * full wipe would also take any orders punched since, which this must not.
+ */
+const ONLY_EXPENSES = process.argv.includes('--only-expenses');
+if (ONLY_EXPENSES && KEEP_EXPENSES) {
+  console.error('--only-expenses and --keep-expenses contradict each other');
+  process.exit(1);
+}
 const STORE_ID =
   process.argv.find((a) => a.startsWith('--store='))?.slice('--store='.length) ??
   SNACKFUEL_STORE_ID;
@@ -67,17 +90,27 @@ async function run(manager: EntityManager, sql: string, params: unknown[]): Prom
 /** Everything about to be removed, fetched with the same predicates the deletes use. */
 async function snapshot(manager: EntityManager) {
   const q = (sql: string) => manager.query(sql, [STORE_ID]);
+  /** Everything other than the ledger is out of scope under --only-expenses. */
+  const unless = (skip: boolean, sql: string) => (skip ? Promise.resolve([]) : q(sql));
 
-  const orders = await q('SELECT * FROM orders WHERE "storeId" = $1');
-  const orderItems = await q(
+  const orders = await unless(ONLY_EXPENSES, 'SELECT * FROM orders WHERE "storeId" = $1');
+  const orderItems = await unless(
+    ONLY_EXPENSES,
     'SELECT * FROM order_items WHERE "orderId" IN (SELECT id FROM orders WHERE "storeId" = $1)',
   );
-  const orderEvents = await q('SELECT * FROM order_events WHERE "storeId" = $1');
-  const cashierShifts = await q('SELECT * FROM cashier_shifts WHERE "storeId" = $1');
-  const expenses = await q('SELECT * FROM expenses WHERE "storeId" = $1');
-  const inventoryMovements = await q('SELECT * FROM inventory_movements WHERE "storeId" = $1');
-  const inventoryItems = await q('SELECT * FROM inventory_items WHERE "storeId" = $1');
-  const productIngredients = await q(
+  const orderEvents = await unless(ONLY_EXPENSES, 'SELECT * FROM order_events WHERE "storeId" = $1');
+  const cashierShifts = await unless(ONLY_EXPENSES, 'SELECT * FROM cashier_shifts WHERE "storeId" = $1');
+  const expenses = await unless(KEEP_EXPENSES, 'SELECT * FROM expenses WHERE "storeId" = $1');
+  const inventoryMovements = await unless(
+    ONLY_EXPENSES,
+    'SELECT * FROM inventory_movements WHERE "storeId" = $1',
+  );
+  const inventoryItems = await unless(
+    KEEP_INVENTORY || ONLY_EXPENSES,
+    'SELECT * FROM inventory_items WHERE "storeId" = $1',
+  );
+  const productIngredients = await unless(
+    KEEP_INVENTORY || ONLY_EXPENSES,
     `SELECT * FROM product_ingredients
       WHERE "inventoryItemId" IN (SELECT id FROM inventory_items WHERE "storeId" = $1)
          OR "productId"       IN (SELECT id FROM products        WHERE "storeId" = $1)`,
@@ -86,14 +119,16 @@ async function snapshot(manager: EntityManager) {
   // Deletable customers: filed under this store, or legacy (NULL storeId) but
   // only ever used by this store's orders. Anyone another store's order still
   // points at must stay, or the FK on orders.customerId fails the transaction.
-  const customersScoped = await q(
+  const customersScoped = await unless(
+    ONLY_EXPENSES,
     `SELECT c.* FROM customers c
       WHERE c."storeId" = $1
         AND NOT EXISTS (
           SELECT 1 FROM orders o
            WHERE o."customerId" = c.id AND o."storeId" IS DISTINCT FROM $1::uuid)`,
   );
-  const customersLegacy = await q(
+  const customersLegacy = await unless(
+    ONLY_EXPENSES,
     `SELECT DISTINCT c.* FROM customers c
        JOIN orders o ON o."customerId" = c.id AND o."storeId" = $1
       WHERE c."storeId" IS NULL
@@ -101,16 +136,20 @@ async function snapshot(manager: EntityManager) {
           SELECT 1 FROM orders o2
            WHERE o2."customerId" = c.id AND o2."storeId" IS DISTINCT FROM $1::uuid)`,
   );
-  const [{ count: customersSkipped }] = await q(
-    `SELECT count(DISTINCT c.id)::int AS count FROM customers c
-       JOIN orders o ON o."customerId" = c.id AND o."storeId" = $1
-      WHERE EXISTS (
-          SELECT 1 FROM orders o2
-           WHERE o2."customerId" = c.id AND o2."storeId" IS DISTINCT FROM $1::uuid)`,
-  );
+  const [{ count: customersSkipped }] = ONLY_EXPENSES
+    ? [{ count: 0 }]
+    : await q(
+        `SELECT count(DISTINCT c.id)::int AS count FROM customers c
+           JOIN orders o ON o."customerId" = c.id AND o."storeId" = $1
+          WHERE EXISTS (
+              SELECT 1 FROM orders o2
+               WHERE o2."customerId" = c.id AND o2."storeId" IS DISTINCT FROM $1::uuid)`,
+      );
 
-  const tables = await q('SELECT * FROM restaurant_tables WHERE "storeId" = $1');
-  const [{ orderSequence }] = await q('SELECT "orderSequence" FROM stores WHERE id = $1');
+  const tables = await unless(ONLY_EXPENSES, 'SELECT * FROM restaurant_tables WHERE "storeId" = $1');
+  const [{ orderSequence }] = ONLY_EXPENSES
+    ? [{ orderSequence: 0 }]
+    : await q('SELECT "orderSequence" FROM stores WHERE id = $1');
 
   const plan: Plan = {
     orders: orders.length,
@@ -128,9 +167,9 @@ async function snapshot(manager: EntityManager) {
     orderSequence,
   };
 
-  const customerIds: string[] = [...customersScoped, ...customersLegacy].map(
-    (c: { id: string }) => c.id,
-  );
+  const customerIds: string[] = KEEP_CUSTOMERS
+    ? []
+    : [...customersScoped, ...customersLegacy].map((c: { id: string }) => c.id);
 
   return {
     plan,
@@ -154,18 +193,33 @@ async function snapshot(manager: EntityManager) {
 function printPlan(plan: Plan, verb: string) {
   const line = (label: string, n: number) =>
     console.log(`   ${label.padEnd(22)} ${String(n).padStart(6)}`);
+  const kept = (label: string) => console.log(`   ${label.padEnd(22)}   kept`);
   console.log(`${verb}:`);
+  if (ONLY_EXPENSES) {
+    line('expenses', plan.expenses);
+    console.log('   (everything else untouched: --only-expenses)\n');
+    return;
+  }
   line('orders', plan.orders);
   line('order items', plan.orderItems);
   line('order events', plan.orderEvents);
   line('cashier shifts', plan.cashierShifts);
-  line('expenses', plan.expenses);
+  if (KEEP_EXPENSES) kept('expenses'); else line('expenses', plan.expenses);
   line('inventory movements', plan.inventoryMovements);
-  line('recipes (ingredients)', plan.productIngredients);
-  line('inventory items', plan.inventoryItems);
-  line('customers (this store)', plan.customersScoped);
-  line('customers (legacy)', plan.customersLegacy);
-  if (plan.customersSkipped > 0) {
+  if (KEEP_INVENTORY) {
+    kept('recipes (ingredients)');
+    kept('inventory items');
+  } else {
+    line('recipes (ingredients)', plan.productIngredients);
+    line('inventory items', plan.inventoryItems);
+  }
+  if (KEEP_CUSTOMERS) {
+    kept('customers');
+  } else {
+    line('customers (this store)', plan.customersScoped);
+    line('customers (legacy)', plan.customersLegacy);
+  }
+  if (!KEEP_CUSTOMERS && plan.customersSkipped > 0) {
     line('customers SKIPPED', plan.customersSkipped);
     console.log('   (still referenced by another store; left in place)');
   }
@@ -200,9 +254,20 @@ async function main() {
       throw new Error(`Store ${store[0].name} is not a restaurant account`);
     }
 
+    const keeping = ONLY_EXPENSES
+      ? 'everything except expenses'
+      : [
+          KEEP_EXPENSES && 'expenses',
+          KEEP_INVENTORY && 'inventory + recipes',
+          KEEP_CUSTOMERS && 'customers',
+        ]
+          .filter(Boolean)
+          .join(', ');
     console.log(
       `🧹 ${APPLY ? 'CLEARING' : 'Dry run for'} ${store[0].name} (${STORE_ID})` +
-        ` on ${process.env.DATABASE_HOST || 'localhost'}\n`,
+        ` on ${process.env.DATABASE_HOST || 'localhost'}` +
+        (keeping ? `\n   keeping: ${keeping}` : '') +
+        '\n',
     );
 
     const { plan, customerIds, rows } = await dataSource.transaction((m) => snapshot(m));
@@ -234,6 +299,11 @@ async function main() {
       const s = [STORE_ID];
       const out: Record<string, number> = {};
 
+      if (ONLY_EXPENSES) {
+        out.expenses = await run(m, 'DELETE FROM expenses WHERE "storeId" = $1', s);
+        return out;
+      }
+
       out.orderEvents = await run(m, 'DELETE FROM order_events WHERE "storeId" = $1', s);
       out.orderItems = await run(
         m,
@@ -250,20 +320,26 @@ async function main() {
       );
       out.orders = await run(m, 'DELETE FROM orders WHERE "storeId" = $1', s);
       out.cashierShifts = await run(m, 'DELETE FROM cashier_shifts WHERE "storeId" = $1', s);
-      out.expenses = await run(m, 'DELETE FROM expenses WHERE "storeId" = $1', s);
+      out.expenses = KEEP_EXPENSES
+        ? 0
+        : await run(m, 'DELETE FROM expenses WHERE "storeId" = $1', s);
       out.inventoryMovements = await run(
         m,
         'DELETE FROM inventory_movements WHERE "storeId" = $1',
         s,
       );
-      out.productIngredients = await run(
-        m,
-        `DELETE FROM product_ingredients
-          WHERE "inventoryItemId" IN (SELECT id FROM inventory_items WHERE "storeId" = $1)
-             OR "productId"       IN (SELECT id FROM products        WHERE "storeId" = $1)`,
-        s,
-      );
-      out.inventoryItems = await run(m, 'DELETE FROM inventory_items WHERE "storeId" = $1', s);
+      out.productIngredients = KEEP_INVENTORY
+        ? 0
+        : await run(
+            m,
+            `DELETE FROM product_ingredients
+              WHERE "inventoryItemId" IN (SELECT id FROM inventory_items WHERE "storeId" = $1)
+                 OR "productId"       IN (SELECT id FROM products        WHERE "storeId" = $1)`,
+            s,
+          );
+      out.inventoryItems = KEEP_INVENTORY
+        ? 0
+        : await run(m, 'DELETE FROM inventory_items WHERE "storeId" = $1', s);
       out.customers = customerIds.length
         ? await run(m, 'DELETE FROM customers WHERE id = ANY($1::uuid[])', [customerIds])
         : 0;
@@ -279,17 +355,26 @@ async function main() {
     const line = (label: string, n: number) =>
       console.log(`   ${label.padEnd(22)} ${String(n).padStart(6)}`);
     console.log('Deleted:');
+    if (ONLY_EXPENSES) {
+      line('expenses', done.expenses);
+      console.log(`\n✨ ${store[0].name}'s expense ledger is empty. Nothing else was touched.`);
+      return;
+    }
     line('orders', done.orders);
     line('order items', done.orderItems);
     line('order events', done.orderEvents);
     line('cashier shifts', done.cashierShifts);
-    line('expenses', done.expenses);
+    if (!KEEP_EXPENSES) line('expenses', done.expenses);
     line('inventory movements', done.inventoryMovements);
-    line('recipes (ingredients)', done.productIngredients);
-    line('inventory items', done.inventoryItems);
-    line('customers', done.customers);
-    if (plan.customersSkipped > 0) {
-      line('customers SKIPPED', plan.customersSkipped);
+    if (!KEEP_INVENTORY) {
+      line('recipes (ingredients)', done.productIngredients);
+      line('inventory items', done.inventoryItems);
+    }
+    if (KEEP_CUSTOMERS) {
+      console.log(`   ${'customers'.padEnd(22)}   kept`);
+    } else {
+      line('customers', done.customers);
+      if (plan.customersSkipped > 0) line('customers SKIPPED', plan.customersSkipped);
     }
     console.log('');
     line('tables freed', done.tablesFreed);

@@ -1,5 +1,37 @@
-import { IsString, IsOptional, IsIn, IsEmail, IsBoolean, MinLength } from 'class-validator';
+import { IsString, IsOptional, IsIn, IsEmail, IsBoolean, IsInt, Matches, MaxLength, MinLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+
+/**
+ * Recording a subscription payment. Exactly one of `months` / `expiresAt`:
+ * a preset extends what is left, an exact date overrides it (the service
+ * enforces the either/or). Every field must be declared here or the global
+ * `whitelist: true` ValidationPipe drops it silently.
+ */
+export class ExtendSubscriptionDto {
+  @ApiProperty({ required: false, enum: [1, 2, 3, 6, 12], description: 'Months paid for, added to the remaining time' })
+  @IsOptional()
+  @IsInt()
+  @IsIn([1, 2, 3, 6, 12])
+  months?: number;
+
+  @ApiProperty({ required: false, example: '2027-01-21', description: 'Exact day the store is paid through (YYYY-MM-DD)' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'expiresAt must be YYYY-MM-DD' })
+  expiresAt?: string;
+
+  @ApiProperty({ required: false, description: 'Free text, e.g. how it was paid' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  note?: string;
+
+  @ApiProperty({ required: false, example: 'Asia/Karachi', description: "The admin's IANA zone; 'today' is taken in it" })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  tz?: string;
+}
 
 export class CreateStoreDto {
   @ApiProperty({ example: 'My Store' })

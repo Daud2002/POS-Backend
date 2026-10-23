@@ -3,9 +3,10 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { typeormConfig } from './database/typeorm.config';
-import { User, Category, Product, Customer, Order, OrderItem, Store, Employee, RefreshToken, RestaurantTable, Expense, ExpenseCategory, CashierShift, InventoryItem, InventoryMovement, ProductIngredient } from './entities';
+import { User, Category, Product, Customer, Order, OrderItem, Store, Employee, RefreshToken, RestaurantTable, Expense, ExpenseCategory, CashierShift, InventoryItem, InventoryMovement, ProductIngredient, AuditLog, SubscriptionPayment } from './entities';
 import { AuthModule } from './auth/auth.module';
 import { CommonModule } from './common/common.module';
+import { AuditModule } from './audit/audit.module';
 import { AppController } from './app.controller';
 import { ProductsModule } from './modules/products/products.module';
 import { CategoriesModule } from './modules/categories/categories.module';
@@ -33,8 +34,10 @@ import { PrintingModule } from './modules/printing/printing.module';
     // restaurant's order number back to 1 each morning.
     ScheduleModule.forRoot(),
     TypeOrmModule.forRoot(typeormConfig()),
-    TypeOrmModule.forFeature([User, Category, Product, Customer, Order, OrderItem, Store, Employee, RefreshToken, RestaurantTable, Expense, ExpenseCategory, CashierShift, InventoryItem, InventoryMovement, ProductIngredient]),
+    TypeOrmModule.forFeature([User, Category, Product, Customer, Order, OrderItem, Store, Employee, RefreshToken, RestaurantTable, Expense, ExpenseCategory, CashierShift, InventoryItem, InventoryMovement, ProductIngredient, AuditLog, SubscriptionPayment]),
     CommonModule,
+    // Before AuthModule: the impersonation exchange writes its own audit row.
+    AuditModule,
     AuthModule,
     ProductsModule,
     CategoriesModule,

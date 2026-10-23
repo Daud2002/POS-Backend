@@ -42,11 +42,10 @@ import { toPage, type Page } from '../../common/pagination';
 import { categorySkipsKitchen, kitchenLines } from '../../common/kitchen-routing';
 import {
   applyRemovals,
-  assertCanActOnBill,
   BillViewer,
+  billPrintMode,
   computeTotals,
   initialStatus,
-  isOwnerRole,
   mayPrintOnCreate,
   needsTable,
   resolveOrderType,
@@ -59,9 +58,9 @@ import {
 } from './order-rules';
 
 /**
- * Who is asking. Threaded through the reads so a cashier's list can exclude
- * bills another cashier has claimed, and through the writes so the claim can
- * be enforced and the history can name them. Owners see and may do everything.
+ * Who is asking. Threaded through the writes so the history can name them and
+ * a waiter's round can clear the "bill printed" marker. Reads are the same for
+ * every role: an unpaid order is in front of every till until it is settled.
  */
 export type OrderViewer = BillViewer;
 
@@ -234,19 +233,12 @@ export class RestaurantOrdersService {
     }
 
     /**
-     * A printed bill belongs to the cashier who printed it.
-     *
-     * Every cashier sees every open order right up to the moment one of them
-     * prints its bill; from then on it appears only on that cashier's till,
-     * so two tills cannot both collect for the same table. Owners see all —
-     * they are the ones who step in when that cashier has gone home.
+     * No per-cashier filter: a printed, unpaid order stays in front of every
+     * cashier and supervisor until somebody marks it paid, so a second till
+     * can take the money when the first is busy or has gone home. Who
+     * printed it rides along on the row (`billPrintedByName`) as information.
      */
-    if (viewer && !isOwnerRole(viewer.role) && viewer.role === 'cashier') {
-      qb.andWhere(
-        '(order.billPrintedById IS NULL OR order.billPrintedById = :viewerId)',
-        { viewerId: viewer.userId },
-      );
-    }
+    void viewer;
 
     /**
      * Server-side search across the fields the order list actually shows.
@@ -677,9 +669,9 @@ export class RestaurantOrdersService {
 
     /**
      * A printed bill no longer matches the order. When a WAITER added the
-     * round the claim is released — they cannot reprint, so the order goes
-     * back in front of every cashier. The claiming cashier (or an owner)
-     * reprints as part of the same edit and keeps the claim. Either way the
+     * round the "bill printed" marker comes off — they cannot reprint, so the
+     * order reads "ready to bill" again. A cashier, supervisor or owner
+     * reprints as part of the same edit and keeps the marker. Either way the
      * discount survives: it is re-resolved against the new subtotal below.
      */
     const releaseClaim = shouldReleaseClaim(existing, viewer);
@@ -753,7 +745,6 @@ export class RestaurantOrdersService {
     if (!LIVE_ORDER_STATUSES.includes(existing.orderStatus)) {
       throw new ConflictException('This order is no longer open');
     }
-    assertCanActOnBill(existing, viewer);
 
     const plan = applyRemovals(existing.items ?? [], dto.items ?? []);
     const statusBefore = existing.orderStatus;
@@ -855,27 +846,33 @@ export class RestaurantOrdersService {
    * the table stays taken; that is settle()'s job.
    *
    * Allowed from any live kitchen status, because a takeaway or delivery is
-   * billed the moment it is ordered, long before the kitchen is done. The
-   * first cashier to print claims the order (see order-rules.ts); printing
-   * again is a reprint — after an item change, or for a lost slip.
+   * billed the moment it is ordered, long before the kitchen is done. Any
+   * cashier, supervisor or owner may print or reprint; the order stays in
+   * front of every till until it is paid (see order-rules.ts).
    *
    * The money fields follow "absent = keep, null = clear", so a bare `{}`
    * from an older client is a plain reprint and never wipes a discount the
    * order was punched with.
+   *
+   * A SETTLED order can be printed again too — a customer who wants their
+   * copy after paying — but that is a pure reprint: nothing moves except the
+   * print count and a history row. The totals the customer paid, the
+   * discount, the delivery charge and who printed first are all left alone,
+   * so a paid sale can never drift away from the money that was taken for it.
    */
   async printBill(id: string, storeId: string, dto: PrintBillDto, viewer: OrderViewer) {
     const existing = await this.loadForBilling(id, storeId);
 
-    if (existing.orderStatus === 'draft') {
+    const mode = billPrintMode(existing);
+    if (mode === 'draft') {
       throw new ConflictException('Send this order to the kitchen before printing its bill');
     }
-    if (existing.orderStatus === 'completed') {
-      throw new ConflictException('This order is already settled');
-    }
-    if (existing.orderStatus === 'cancelled') {
+    if (mode === 'cancelled') {
       throw new ConflictException('This order was cancelled');
     }
-    assertCanActOnBill(existing, viewer);
+    if (mode === 'settled') {
+      return this.reprintSettledBill(existing, viewer);
+    }
 
     // Recomputed and clamped server-side — never trusted from the client.
     const sentDiscount = dto.discountType !== undefined || dto.discountValue !== undefined;
@@ -908,8 +905,29 @@ export class RestaurantOrdersService {
     });
 
     const order = await this.findOne(id, storeId);
-    // Other tills drop this order from their lists; this one keeps it.
+    // Every till shows the "bill printed" marker and who holds the paper.
     this.realtime.emitToStore(storeId, RealtimeEvents.orderUpdated, order);
+    return order;
+  }
+
+  /** The after-payment reprint: one more copy, nothing else changes. See printBill(). */
+  private async reprintSettledBill(existing: Order, viewer: OrderViewer) {
+    const printNumber = (Number(existing.billPrintCount) || 0) + 1;
+    const now = new Date();
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.update(Order, existing.id, { billPrintCount: printNumber });
+      await this.logEvent(manager, existing, 'bill_printed', viewer, {
+        lines: [],
+        totals: this.totalsOf(existing),
+        reprint: true,
+        printNumber,
+      }, now);
+    });
+
+    const order = await this.findOne(existing.id, existing.storeId);
+    // The reprint count on the order lists moves; nothing else did.
+    this.realtime.emitToStore(existing.storeId, RealtimeEvents.orderUpdated, order);
     return order;
   }
 
@@ -917,11 +935,11 @@ export class RestaurantOrdersService {
    * Cashier settles: marks the printed bill paid, completes it, frees the
    * table, and stamps the money onto the settling cashier's open shift.
    *
-   * The bill must have been printed first, by this same cashier (an owner may
-   * step in). What is charged is what was printed: the discount fixed by
-   * printBill(). The DTO's discount fields are honoured only for older
-   * clients that still send them — a client built for the two-step flow
-   * omits them.
+   * The bill must have been printed first — by any till; whoever settles is
+   * the one credited, because the money is stamped onto THEIR open drawer.
+   * What is charged is what was printed: the discount fixed by printBill().
+   * The DTO's discount fields are honoured only for older clients that still
+   * send them — a client built for the two-step flow omits them.
    *
    * `userId` is who took the money. Note this is NOT `createdById`: that is
    * the waiter, who never handles cash.
@@ -941,7 +959,6 @@ export class RestaurantOrdersService {
     if (!existing.billPrintedAt) {
       throw new ConflictException('Print the bill before marking this order paid');
     }
-    assertCanActOnBill(existing, viewer);
 
     // The printed figure, unless an older one-step client sent its own.
     const sentDiscount = dto.discountType !== undefined || dto.discountValue !== undefined;
@@ -1016,15 +1033,13 @@ export class RestaurantOrdersService {
   }
 
   /**
-   * Cashier or owner cancels. The kitchen deliberately cannot, and a cashier
-   * cannot cancel a bill another cashier has printed.
+   * Cashier, supervisor or owner cancels. The kitchen deliberately cannot.
    */
   async cancel(id: string, storeId: string, viewer: OrderViewer) {
     const existing = await this.loadForBilling(id, storeId);
     if (existing.orderStatus === 'completed') {
       throw new ConflictException('A settled order cannot be cancelled');
     }
-    assertCanActOnBill(existing, viewer);
 
     await this.dataSource.transaction(async (manager) => {
       await manager.update(Order, id, { orderStatus: 'cancelled', status: 'cancelled' });

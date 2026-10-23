@@ -5,11 +5,13 @@ import {
   CurrentUser,
   PermissionsGuard,
   RequirePermissions,
+  Roles,
   RolesGuard,
   TenantService,
   resolvePermissions,
 } from '@/common';
 import { ProfitReportService } from './profit-report.service';
+import { PlatformOverviewService } from './platform-overview.service';
 
 /**
  * Store-wide figures that both account types share.
@@ -27,8 +29,26 @@ import { ProfitReportService } from './profit-report.service';
 export class ReportsController {
   constructor(
     private profitReportService: ProfitReportService,
+    private platformOverviewService: PlatformOverviewService,
     private tenantService: TenantService,
   ) {}
+
+  /**
+   * The platform admin's dashboard, across every store. Not tenant-scoped,
+   * which is why it is pinned to the super_admin role rather than a module.
+   */
+  @Get('platform-overview')
+  @Roles('super_admin')
+  @RequirePermissions('dashboard')
+  @ApiOperation({ summary: 'Store counts, revenue per currency, monthly trend and subscription state across the platform (admin only)' })
+  @ApiQuery({
+    name: 'tz',
+    required: false,
+    description: "The admin's IANA zone; months and 'today' are taken in it. Unknown zones fall back to UTC.",
+  })
+  async platformOverview(@Query('tz') tz?: string) {
+    return this.platformOverviewService.overview(tz);
+  }
 
   @Get('profit')
   @RequirePermissions('dashboard')

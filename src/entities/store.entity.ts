@@ -116,6 +116,23 @@ export class Store {
   @Column({ type: 'varchar', length: 100, nullable: true })
   logoMimeType?: string | null;
 
+  /**
+   * The last day the tenant's subscription is paid through ('YYYY-MM-DD'),
+   * or null when the platform admin has never recorded a payment — which is
+   * what every pre-existing store has, so this release shows no warning
+   * anywhere until a date is entered on the Subscriptions page.
+   *
+   * A calendar DATE, not a timestamp: there is no timezone on the store, and
+   * "paid through the 21st" must mean the 21st wherever the owner is. The
+   * dashboards count whole days to it (yellow at 3, red at 1) and the history
+   * of how it got here is `subscription_payments`.
+   *
+   * Nullable with no default on purpose: `synchronize` runs against
+   * production, and that is the one kind of column it can add safely.
+   */
+  @Column({ type: 'date', nullable: true })
+  subscriptionExpiresAt?: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

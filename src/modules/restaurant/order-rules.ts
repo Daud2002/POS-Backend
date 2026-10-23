@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import type { OrderType, RestaurantOrderStatus } from '../../entities';
 import { kitchenLines } from '../../common/kitchen-routing';
 import { resolveDiscount, round2, type DiscountType } from '../../common/discount';
@@ -277,52 +277,47 @@ export function isOwnerRole(role?: string | null): boolean {
 }
 
 /**
- * Who may step past another cashier's claim on a bill.
+ * Who can put a bill on paper: the roles the print-bill route admits.
  *
- * Owners always could. A supervisor is the owner's stand-in on the floor —
- * the person who sorts out a table when the cashier who printed its bill has
- * gone home — so they get the same override. Kept separate from isOwnerRole()
- * because a supervisor is still staff everywhere else (their own drawer, their
- * own permissions, no staff management).
+ * There is deliberately NO per-cashier claim any more. A printed, unpaid
+ * order stays in front of every cashier and supervisor until somebody marks
+ * it paid, and any of them may reprint, settle or cancel it — the money lands
+ * on whoever settles, because settle() stamps the settler's own drawer.
+ * `billPrintedById` is kept purely as information: who printed, and when.
  */
-export function canOverrideBill(role?: string | null): boolean {
-  return isOwnerRole(role) || role === 'supervisor';
+export function canPrintBills(role?: string | null): boolean {
+  return isOwnerRole(role) || role === 'cashier' || role === 'supervisor';
 }
 
 /**
- * Whether this user may act on a bill (reprint it, take its money, cancel it).
+ * Whether adding a round to a printed bill clears the "bill printed" marker.
  *
- * The first cashier to print a bill CLAIMS the order: two tills must not both
- * be able to collect for the same table. Until a bill is printed the order is
- * open to every cashier; once printed, only the printer — or an owner or
- * supervisor, who can always step in when that cashier has gone home.
- */
-export function canActOnBill(order: BillClaimable, viewer: BillViewer): boolean {
-  if (!order.billPrintedById) return true;
-  if (canOverrideBill(viewer.role)) return true;
-  return order.billPrintedById === viewer.userId;
-}
-
-export function assertCanActOnBill(order: BillClaimable, viewer: BillViewer): void {
-  if (canActOnBill(order, viewer)) return;
-  const who = order.billPrintedBy?.name ? ` by ${order.billPrintedBy.name}` : ' by another cashier';
-  throw new ForbiddenException(
-    `This bill was printed${who}. Only they can settle it, unless an owner steps in.`,
-  );
-}
-
-/**
- * Whether adding a round to a printed bill hands the order back to every till.
- *
- * A waiter's round makes the paper wrong and the waiter cannot reprint it, so
- * the claim is released and whoever bills it next prints afresh. The cashier
- * who holds the claim (or an owner) reprints as part of the same edit, so
- * their change keeps the claim — releasing it would let a second till grab an
- * order the first is mid-way through.
+ * A waiter's (or the kitchen's) round makes the paper wrong and they cannot
+ * reprint it, so the marker comes off and the order reads "ready to bill"
+ * again for whoever bills it next. A cashier, supervisor or owner reprints as
+ * part of the same edit, so their change keeps the marker and the till simply
+ * flags the paper as stale.
  */
 export function shouldReleaseClaim(order: BillClaimable, viewer: BillViewer): boolean {
   if (!order.billPrintedById) return false;
-  return !canActOnBill(order, viewer);
+  return !canPrintBills(viewer.role);
+}
+
+export type BillPrintMode = 'draft' | 'cancelled' | 'live' | 'settled';
+
+/**
+ * What printing the bill of an order means right now.
+ *
+ * A live order gets the full treatment (figures fixed, marker set); a settled
+ * one gets a plain REPRINT that changes nothing but the print count, so the
+ * paper can be produced again after payment without the totals, the discount
+ * or the "printed by" information ever moving under a paid sale.
+ */
+export function billPrintMode(order: { orderStatus?: RestaurantOrderStatus | string | null }): BillPrintMode {
+  if (order.orderStatus === 'draft') return 'draft';
+  if (order.orderStatus === 'cancelled') return 'cancelled';
+  if (order.orderStatus === 'completed') return 'settled';
+  return 'live';
 }
 
 /**
@@ -343,14 +338,12 @@ export function writesHistory(role?: string | null): boolean {
 }
 
 /**
- * Who may have the bill printed as part of creating the order.
- *
- * Printing claims the order for the printer, so a waiter must never do it —
- * their till has no printer for bills, and the claim would lock every cashier
- * out of an order nobody can settle.
+ * Who may have the bill printed as part of creating the order: the same
+ * roles that can print one at all. A waiter's till has no bill printer, so a
+ * waiter's order is always billed later by a cashier.
  */
 export function mayPrintOnCreate(role?: string | null): boolean {
-  return role === 'cashier' || canOverrideBill(role);
+  return canPrintBills(role);
 }
 
 // ------------------------------------------------------------------ payment

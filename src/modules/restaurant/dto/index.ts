@@ -132,7 +132,7 @@ export class CreateRestaurantOrderDto {
   discountValue?: number;
 
   @ApiPropertyOptional({
-    example: 100,
+    example: 0,
     description: 'Delivery charge for this order. Ignored (stored as 0) unless orderType is delivery.',
   })
   @IsOptional()
@@ -263,7 +263,7 @@ export class PrintBillDto {
   discountValue?: number | null;
 
   @ApiPropertyOptional({
-    example: 100,
+    example: 0,
     nullable: true,
     description: 'Delivery charge. Omit to keep the stored one; only meaningful on a delivery.',
   })

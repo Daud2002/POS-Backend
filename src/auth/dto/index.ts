@@ -1,5 +1,19 @@
-import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+
+export class CreateImpersonationLinkDto {
+  @ApiProperty({ description: 'The store owner or employee (users.id) to sign in as' })
+  @IsUUID()
+  targetUserId: string;
+}
+
+export class ExchangeImpersonationDto {
+  @ApiProperty({ description: 'The token from an impersonation link' })
+  @IsNotEmpty()
+  @IsString()
+  @MaxLength(2000)
+  token: string;
+}
 
 export class LoginDto {
   @ApiProperty({ example: 'user@example.com', description: 'User email address' })

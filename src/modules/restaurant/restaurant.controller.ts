@@ -110,9 +110,9 @@ export class RestaurantController {
   // ------------------------------------------------------------- orders
 
   /**
-   * A cashier's list omits bills another cashier has printed — see
-   * RestaurantOrdersService.baseQuery. Owners, waiters and the kitchen see
-   * everything their filters ask for.
+   * Every role sees everything its filters ask for. A printed, unpaid bill
+   * stays on every cashier's list until it is settled — see
+   * RestaurantOrdersService.baseQuery.
    */
   @Get('orders')
   @Roles('restaurant_owner', 'waiter', 'kitchen', 'cashier', 'supervisor')
@@ -268,15 +268,15 @@ export class RestaurantController {
 
   /**
    * Step one of taking payment for an order that was not billed at punch
-   * time (a waiter's dine-in), and the reprint for any order: the bill is
-   * printed, counted, and the order is claimed by this cashier.
+   * time (a waiter's dine-in), and the reprint for any order — including a
+   * settled one, which just produces another copy and changes nothing else.
    */
   @Post('orders/:id/print-bill')
   @Roles('cashier', 'supervisor', 'restaurant_owner')
   @ApiOperation({
-    summary: 'Print or reprint the bill: fix discount and delivery charge, claim the order for this cashier',
+    summary: 'Print or reprint the bill: fix discount and delivery charge on a live order; a settled order is reprinted as is',
   })
-  @ApiResponse({ status: 403, description: 'Another cashier already printed this bill' })
+  @ApiResponse({ status: 409, description: 'Draft (send it to the kitchen first) or cancelled order' })
   async printBill(
     @CurrentUser() user: any,
     @Param('id') id: string,
@@ -289,7 +289,7 @@ export class RestaurantController {
   /**
    * Step two: the money. Cash is always taken by a cashier, so the caller is
    * recorded as the settler — and, when the tenant has shifts on, must have an
-   * open drawer. Only the cashier who printed the bill (or an owner) may.
+   * open drawer. Any cashier, supervisor or owner may settle a printed bill.
    */
   @Post('orders/:id/settle')
   @Roles('cashier', 'supervisor', 'restaurant_owner')

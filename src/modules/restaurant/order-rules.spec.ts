@@ -1,8 +1,8 @@
-import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import {
   applyRemovals,
-  assertCanActOnBill,
-  canActOnBill,
+  billPrintMode,
+  canPrintBills,
   computeTotals,
   initialStatus,
   mayPrintOnCreate,
@@ -112,57 +112,45 @@ describe('statusAfterRound', () => {
   });
 });
 
-describe('canActOnBill', () => {
-  const cashierA = { userId: 'a', role: 'cashier' };
-  const cashierB = { userId: 'b', role: 'cashier' };
-  const owner = { userId: 'o', role: 'restaurant_owner' };
-
-  it('lets any cashier act before a bill is printed', () => {
-    expect(canActOnBill({ billPrintedById: null }, cashierA)).toBe(true);
-    expect(canActOnBill({}, cashierB)).toBe(true);
-  });
-
-  it('locks a printed bill to the cashier who printed it', () => {
-    const order = { billPrintedById: 'a' };
-    expect(canActOnBill(order, cashierA)).toBe(true);
-    expect(canActOnBill(order, cashierB)).toBe(false);
-  });
-
-  it('always lets an owner step in', () => {
-    expect(canActOnBill({ billPrintedById: 'a' }, owner)).toBe(true);
-  });
-
-  it('lets a supervisor step in like an owner', () => {
-    expect(canActOnBill({ billPrintedById: 'a' }, { userId: 's', role: 'supervisor' })).toBe(true);
-  });
-
-  it('names the printing cashier in the refusal', () => {
-    const order = { billPrintedById: 'a', billPrintedBy: { name: 'Ayesha' } };
-    expect(() => assertCanActOnBill(order, cashierB)).toThrow(ForbiddenException);
-    expect(() => assertCanActOnBill(order, cashierB)).toThrow(/Ayesha/);
-    expect(() => assertCanActOnBill(order, cashierA)).not.toThrow();
+describe('canPrintBills', () => {
+  it('is every role the print-bill route admits, and nobody else', () => {
+    expect(canPrintBills('cashier')).toBe(true);
+    expect(canPrintBills('supervisor')).toBe(true);
+    expect(canPrintBills('restaurant_owner')).toBe(true);
+    expect(canPrintBills('waiter')).toBe(false);
+    expect(canPrintBills('kitchen')).toBe(false);
+    expect(canPrintBills(null)).toBe(false);
   });
 });
 
 describe('shouldReleaseClaim', () => {
   const printedByA = { billPrintedById: 'a' };
 
-  it('never releases an unprinted bill — there is no claim to release', () => {
+  it('never clears an unprinted bill — there is no marker to clear', () => {
     expect(shouldReleaseClaim({ billPrintedById: null }, { userId: 'w', role: 'waiter' })).toBe(false);
   });
 
-  it("releases when a waiter adds to a printed bill — they cannot reprint it", () => {
+  it("clears the marker when a waiter or the kitchen adds to a printed bill — they cannot reprint it", () => {
     expect(shouldReleaseClaim(printedByA, { userId: 'w', role: 'waiter' })).toBe(true);
+    expect(shouldReleaseClaim(printedByA, { userId: 'k', role: 'kitchen' })).toBe(true);
   });
 
-  it('releases when a different cashier somehow adds to it', () => {
-    expect(shouldReleaseClaim(printedByA, { userId: 'b', role: 'cashier' })).toBe(true);
-  });
-
-  it('keeps the claim for the cashier who holds it and for an owner', () => {
+  it('keeps the marker for anyone who can reprint, whichever till printed it', () => {
     expect(shouldReleaseClaim(printedByA, { userId: 'a', role: 'cashier' })).toBe(false);
+    expect(shouldReleaseClaim(printedByA, { userId: 'b', role: 'cashier' })).toBe(false);
     expect(shouldReleaseClaim(printedByA, { userId: 'o', role: 'restaurant_owner' })).toBe(false);
     expect(shouldReleaseClaim(printedByA, { userId: 's', role: 'supervisor' })).toBe(false);
+  });
+});
+
+describe('billPrintMode', () => {
+  it('refuses drafts and cancellations, prints live orders, reprints settled ones', () => {
+    expect(billPrintMode({ orderStatus: 'draft' })).toBe('draft');
+    expect(billPrintMode({ orderStatus: 'cancelled' })).toBe('cancelled');
+    expect(billPrintMode({ orderStatus: 'completed' })).toBe('settled');
+    expect(billPrintMode({ orderStatus: 'requested' })).toBe('live');
+    expect(billPrintMode({ orderStatus: 'preparing' })).toBe('live');
+    expect(billPrintMode({ orderStatus: 'handed_over' })).toBe('live');
   });
 });
 

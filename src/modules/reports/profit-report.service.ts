@@ -1,9 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, SelectQueryBuilder } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Order, OrderItem, Store } from '../../entities';
 import { round2 } from '../../common/discount';
+import { selectAggregates, type AggregateColumn } from '../../common/aggregates';
 import { PERIOD_KEYS, periodStarts, type PeriodKey } from '../../common/periods';
+import { revenueAmountExpr, revenuePredicate, settledAtExpr } from '../../common/revenue';
 import { ExpensesService } from '../expenses/expenses.service';
 
 export interface ProfitPeriod {
@@ -25,25 +27,9 @@ export interface ProfitReport {
   periods: Record<PeriodKey, ProfitPeriod>;
 }
 
-/** One aggregate column: the SQL expression and the name it comes back under. */
-type AggregateColumn = [expression: string, alias: string];
-
-/**
- * Makes the builder select ONLY these aggregate columns.
- *
- * `createQueryBuilder('o')` starts out selecting every column of the entity,
- * and addSelect() APPENDS to that. An aggregate-only query built with
- * addSelect alone therefore reaches Postgres as `SELECT "o"."id", …,
- * COUNT(*)` with no GROUP BY, which it rejects ("column o.id must appear in
- * the GROUP BY clause"). That 500 is what every dashboard was painting as a
- * row of zeros under "Profit figures are not available". The first column
- * goes through select(), which replaces the default list; the rest append.
- */
-function selectAggregates(qb: SelectQueryBuilder<unknown>, columns: AggregateColumn[]): void {
-  columns.forEach(([expression, alias], i) =>
-    i === 0 ? qb.select(expression, alias) : qb.addSelect(expression, alias),
-  );
-}
+// selectAggregates lives in common/aggregates.ts: the platform overview builds
+// the same aggregate-only queries, and the "column must appear in GROUP BY"
+// 500 it prevents was what every dashboard once painted as a row of zeros.
 
 /**
  * Gross and net profit over the six windows every dashboard shows.
@@ -105,16 +91,15 @@ export class ProfitReportService {
    * `orderStatus` 'none' and settle by payment status instead.
    */
   private revenuePredicate(store: Store): string {
-    return store.accountType === 'restaurant'
-      ? `"o"."orderStatus" = 'completed'`
-      : `"o"."status" IN ('paid', 'completed')`;
+    // One rule for every report, including the platform overview.
+    return revenuePredicate('o', store.accountType);
   }
 
   /**
    * Windowed on when the money was TAKEN, falling back to creation for rows
    * that predate settledAt — identical to the sales report.
    */
-  private static readonly SETTLED_AT = `COALESCE("o"."settledAt", "o"."createdAt")`;
+  private static readonly SETTLED_AT = settledAtExpr('o');
 
   private async orderTotals(
     store: Store,
@@ -135,10 +120,7 @@ export class ProfitReportService {
       columns.push([`COUNT("o"."id")${filter}`, `${key}_count`]);
       // Delivery charges are collected cash but not a sale of anything with a
       // cost against it, so they sit outside revenue — as in the sales report.
-      columns.push([
-        `COALESCE(SUM("o"."total" - COALESCE("o"."deliveryCharge", 0))${filter}, 0)`,
-        `${key}_revenue`,
-      ]);
+      columns.push([`COALESCE(SUM(${revenueAmountExpr('o')})${filter}, 0)`, `${key}_revenue`]);
     }
     selectAggregates(qb, columns);
 

@@ -307,8 +307,8 @@ export class Order {
 
   /**
    * Delivery charge, per order. Entered by the cashier when a delivery is
-   * punched (the till suggests a default), and added ON TOP of the discounted
-   * subtotal: `total = max(subtotal - discount, 0) + deliveryCharge`.
+   * punched (the till starts the box at 0), and added ON TOP of the
+   * discounted subtotal: `total = max(subtotal - discount, 0) + deliveryCharge`.
    *
    * Always 0 on anything that is not a delivery — the rules force it, so a
    * report can sum this column without checking the type. It is collected

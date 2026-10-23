@@ -39,7 +39,8 @@
     "db:backfill-customer-store": "ts-node scripts/backfill-customer-store.ts",
     "db:sync-snackfuel": "ts-node scripts/sync-snackfuel-menu.ts",
     "db:clear-snackfuel": "ts-node scripts/clear-snackfuel.ts",
-    "db:update-snackfuel-costs": "ts-node scripts/update-snackfuel-costs.ts"
+    "db:update-snackfuel-costs": "ts-node scripts/update-snackfuel-costs.ts",
+    "db:schema-diff": "ts-node scripts/schema-diff.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.3.0",

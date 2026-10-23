@@ -23,7 +23,8 @@ import {
   ApiBody,
 } from '@nestjs/swagger';
 import { StoresService, type UploadedLogo } from './stores.service';
-import { CreateStoreDto, UpdateStoreDto, UpdateStoreSettingsDto } from './dto';
+import { SubscriptionService } from './subscription.service';
+import { CreateStoreDto, ExtendSubscriptionDto, UpdateStoreDto, UpdateStoreSettingsDto } from './dto';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { Roles, RolesGuard, CurrentUser, TenantService, parsePaging, wantsCount } from '@/common';
 
@@ -39,8 +40,29 @@ const ALLOWED_LOGO_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 export class StoresController {
   constructor(
     private storesService: StoresService,
+    private subscriptionService: SubscriptionService,
     private tenantService: TenantService,
   ) {}
+
+  @Post(':id/subscription')
+  @Roles('super_admin')
+  @ApiOperation({ summary: 'Record a subscription payment: extend by months or set an exact expiry (platform admin only)' })
+  @ApiResponse({ status: 201, description: 'The store with its new expiry, and the payment row' })
+  @ApiResponse({ status: 400, description: 'Neither or both of months/expiresAt given, or an invalid date' })
+  async extendSubscription(
+    @Param('id') id: string,
+    @Body() dto: ExtendSubscriptionDto,
+    @CurrentUser() user: { id: string; name?: string },
+  ) {
+    return this.subscriptionService.extend(id, dto, { id: user.id, name: user.name });
+  }
+
+  @Get(':id/subscription/history')
+  @Roles('super_admin')
+  @ApiOperation({ summary: 'Every subscription payment recorded for a store, newest first (platform admin only)' })
+  async subscriptionHistory(@Param('id') id: string) {
+    return this.subscriptionService.history(id);
+  }
 
   @Get()
   @Roles('super_admin')

@@ -19,3 +19,23 @@ export { CommonModule } from './common.module';
 export { parsePaging, parseOptionalPaging, wantsCount, toPage, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MAX_CATALOGUE_SIZE } from './pagination';
 export type { Page } from './pagination';
 export { SORT_ORDER_FIND_ORDER, isUniqueViolation } from './sort-order';
+export {
+  revenuePredicate,
+  platformRevenuePredicate,
+  settledAtExpr,
+  revenueAmountExpr,
+} from './revenue';
+export {
+  SUBSCRIPTION_PRESET_MONTHS,
+  SUBSCRIPTION_WARNING_DAYS,
+  SUBSCRIPTION_CRITICAL_DAYS,
+  isIsoDay,
+  addMonthsClamped,
+  addDays,
+  daysUntil,
+  computeNewExpiry,
+  subscriptionAlertLevel,
+} from './subscription';
+export type { SubscriptionAlertLevel } from './subscription';
+export { clientIp, userAgentOf } from './request-meta';
+export { resolveTimeZone, todayInZone, zonedMonthStart, periodStarts } from './periods';

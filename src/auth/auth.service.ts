@@ -65,6 +65,7 @@ export class AuthService {
     let printerName: string | undefined;
     let logoUrl: string | undefined | null;
     let shiftsEnabled: boolean | undefined;
+    let subscriptionExpiresAt: string | null = null;
     let storedPermissions: string[] | null = null;
 
     if (user.role === 'store_owner') {
@@ -76,6 +77,7 @@ export class AuthService {
       accountType = store?.accountType;
       logoUrl = store?.logoUrl;
       shiftsEnabled = store?.shiftsEnabled;
+      subscriptionExpiresAt = store?.subscriptionExpiresAt ?? null;
     } else if (user.role === 'employee' || user.role === 'cashier') {
       const employee = await this.employeesRepository.findOne({ where: { userId: user.id } });
       storeId = employee?.storeId;
@@ -90,6 +92,7 @@ export class AuthService {
         accountType = store?.accountType;
         logoUrl = store?.logoUrl;
         shiftsEnabled = store?.shiftsEnabled;
+        subscriptionExpiresAt = store?.subscriptionExpiresAt ?? null;
       }
     }
 
@@ -110,6 +113,13 @@ export class AuthService {
       storeName,
       logoUrl: logoUrl ?? null,
       shiftsEnabled: shiftsEnabled ?? false,
+      /**
+       * The day the store is paid through ('YYYY-MM-DD'), or null when the
+       * platform admin has not recorded a payment. The dashboards turn this
+       * into the yellow/red renewal banner, so it rides on the profile like
+       * the other tenant flags rather than costing a second request.
+       */
+      subscriptionExpiresAt,
       currency,
       printerConfig,
       accountType,
@@ -135,15 +145,63 @@ export class AuthService {
     };
   }
 
+  /** How long a platform admin's "open as" session lasts. No refresh token extends it. */
+  static readonly IMPERSONATED_SESSION_SECONDS = 60 * 60;
+
+  /**
+   * The access-token payload. `imp` is present ONLY on tokens issued through
+   * an impersonation link; JwtStrategy turns it into `user.impersonatedBy`,
+   * which the audit log and the "viewing as" banner both read.
+   */
+  private signAccess(
+    user: { id: string; email: string; role: string },
+    options: { impersonatorId?: string; expiresInSeconds?: number } = {},
+  ): string {
+    const payload: Record<string, unknown> = { email: user.email, sub: user.id, role: user.role };
+    if (options.impersonatorId) payload.imp = options.impersonatorId;
+    return options.expiresInSeconds
+      ? this.jwtService.sign(payload, { expiresIn: options.expiresInSeconds })
+      : this.jwtService.sign(payload);
+  }
+
   async login(user: any, userAgent?: string) {
     const userWithStore = await this.getUserWithStore(user);
-    const payload = { email: user.email, sub: user.id, role: user.role };
 
     return {
-      accessToken: this.jwtService.sign(payload),
+      accessToken: this.signAccess(user),
       refreshToken: await this.refreshTokenService.issue(user.id, userAgent),
       user: userWithStore,
     };
+  }
+
+  /**
+   * A session for `target` opened by a platform admin through an
+   * impersonation link. Deliberately NOT a login: it lasts one hour and
+   * carries no refresh token, so it cannot be extended or kept, and every
+   * request made with it names the admin.
+   */
+  async impersonate(target: any, admin: { id: string; name?: string | null }, userAgent?: string) {
+    const profile = await this.getUserWithStore(target);
+    void userAgent; // Kept for symmetry with login(); nothing is persisted for this session.
+
+    return {
+      accessToken: this.signAccess(target, {
+        impersonatorId: admin.id,
+        expiresInSeconds: AuthService.IMPERSONATED_SESSION_SECONDS,
+      }),
+      refreshToken: null as string | null,
+      user: { ...profile, impersonatedBy: { id: admin.id, name: admin.name ?? null } },
+    };
+  }
+
+  /** The admin behind an `imp` claim, for `user.impersonatedBy`. Null if since deleted. */
+  async describeImpersonator(adminId: string): Promise<{ id: string; name: string | null } | null> {
+    if (!adminId) return null;
+    const admin = await this.usersRepository.findOne({
+      where: { id: adminId },
+      select: { id: true, name: true },
+    });
+    return admin ? { id: admin.id, name: admin.name ?? null } : null;
   }
 
   /**
@@ -164,10 +222,8 @@ export class AuthService {
       throw new UnauthorizedException(inactive);
     }
 
-    const payload = { email: user.email, sub: user.id, role: user.role };
-
     return {
-      accessToken: this.jwtService.sign(payload),
+      accessToken: this.signAccess(user),
       refreshToken: token,
       user: await this.getUserWithStore(user),
     };

@@ -11,6 +11,11 @@ async function bootstrap() {
   // Typed as NestExpressApplication so useStaticAssets() below is available.
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
+  // Production sits behind a proxy that forwards /api/*; without this every
+  // client shares the proxy's address in `req.ip`, which the audit log and
+  // the impersonation rate limit both key on.
+  app.set('trust proxy', 1);
+
   const allowedOrigins = [
     'http://localhost:8080',
     'http://localhost:8081',

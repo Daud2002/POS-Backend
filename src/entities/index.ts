@@ -30,3 +30,5 @@ export type { InventoryUnit } from './inventory-item.entity';
 export { ProductIngredient } from './product-ingredient.entity';
 export { InventoryMovement, INVENTORY_MOVEMENT_TYPES } from './inventory-movement.entity';
 export type { InventoryMovementType } from './inventory-movement.entity';
+export { AuditLog } from './audit-log.entity';
+export { SubscriptionPayment } from './subscription-payment.entity';

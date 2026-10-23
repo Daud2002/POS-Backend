@@ -7,6 +7,7 @@ import { RefreshTokenService } from './refresh-token.service';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
+import { ImpersonationService } from './impersonation.service';
 import { ConfigService } from '@nestjs/config';
 
 @Module({
@@ -43,7 +44,7 @@ import { ConfigService } from '@nestjs/config';
       },
     }),
   ],
-  providers: [AuthService, JwtStrategy, RefreshTokenService],
+  providers: [AuthService, JwtStrategy, RefreshTokenService, ImpersonationService],
   controllers: [AuthController],
   // JwtModule is re-exported so RealtimeGateway can verify tokens on the
   // socket handshake using the same secret and options as the HTTP guard.

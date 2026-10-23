@@ -1,10 +1,22 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { Expense, ExpenseCategory, type ExpensePaymentMethod } from '@/entities';
 import { toPage, type Page } from '@/common';
 import { ShiftsService } from '../shifts/shifts.service';
 import { CreateExpenseDto, UpdateExpenseDto } from './dto';
+
+/** Who is writing the ledger: the id for the audit column, the role for the shift rule. */
+export interface ExpenseActor {
+  id: string;
+  effectiveRole?: string | null;
+}
+
+/** The roles that work a drawer, and so must have one open to touch the ledger. */
+export const SHIFT_GATED_ROLES: ReadonlyArray<string> = ['cashier', 'supervisor'];
+
+export const OPEN_SHIFT_FOR_EXPENSES =
+  'Open your shift before recording an expense — cash spend is counted against your drawer.';
 
 export interface ExpenseSummary {
   /** The calendar day these figures were computed for, echoed back. */
@@ -35,13 +47,50 @@ export class ExpensesService {
   }
 
   /**
-   * The open drawer this spend came out of, if any.
+   * Whether this actor must have a drawer open to touch the ledger.
+   *
+   * Cashiers and supervisors, on a tenant that has shifts on — exactly the
+   * rule settling uses. Everyone else is exempt: owners have no drawer to
+   * open, and a waiter or kitchen hand granted the expenses module cannot
+   * open a shift at all, so gating them would lock them out of the ledger.
+   */
+  private async isShiftGated(storeId: string, actor: ExpenseActor | undefined): Promise<boolean> {
+    if (!actor?.effectiveRole || !SHIFT_GATED_ROLES.includes(actor.effectiveRole)) return false;
+    return this.shiftsService.isEnforced(storeId);
+  }
+
+  /**
+   * The gated actor's open drawer, or a 409 telling them to open one.
+   *
+   * Runs inside the caller's transaction so the FOR SHARE lock in
+   * findOpenShift holds until the ledger row is written: close() cannot
+   * snapshot the drawer between this check and the expense landing on it.
+   */
+  private async requireOpenShift(
+    manager: EntityManager,
+    storeId: string,
+    actor: ExpenseActor,
+  ): Promise<string> {
+    try {
+      const stamp = await this.shiftsService.stampSettlement(manager, storeId, actor.id, { enforce: true });
+      return stamp.shiftId as string;
+    } catch (error) {
+      if (error instanceof ConflictException) throw new ConflictException(OPEN_SHIFT_FOR_EXPENSES);
+      throw error;
+    }
+  }
+
+  /**
+   * The open drawer this spend came out of, if any — for actors who are NOT
+   * gated (owners, waiters granted the ledger).
    *
    * Returns null rather than throwing on any failure: linking to a shift makes
-   * the till reconcile, but it must never be the reason booking an expense
-   * fails.
+   * the till reconcile, but for these roles it must never be the reason
+   * booking an expense fails. Cashiers and supervisors never reach this: for
+   * them the shift is required, not optional (see requireOpenShift).
    */
   private async resolveShiftId(
+    manager: EntityManager,
     storeId: string,
     paymentMethod: string | undefined,
     createdById: string | undefined,
@@ -49,12 +98,9 @@ export class ExpensesService {
     if (paymentMethod !== 'cash' || !createdById) return null;
 
     try {
-      const stamp = await this.shiftsService.stampSettlement(
-        this.dataSource.manager,
-        storeId,
-        createdById,
-        { enforce: false },
-      );
+      const stamp = await this.shiftsService.stampSettlement(manager, storeId, createdById, {
+        enforce: false,
+      });
       return stamp.shiftId;
     } catch {
       return null;
@@ -74,36 +120,50 @@ export class ExpensesService {
   async create(
     storeId: string,
     dto: CreateExpenseDto,
-    createdById?: string,
+    actor?: ExpenseActor,
   ): Promise<Expense> {
     await this.assertCategoryInStore(storeId, dto.categoryId);
+    const gated = await this.isShiftGated(storeId, actor);
+    const createdById = actor?.id;
 
-    /**
-     * A CASH expense entered while the author has a drawer open is money that
-     * physically left that drawer, so it must reduce their expected cash —
-     * otherwise the cashier who paid a supplier looks short at closing.
-     *
-     * Attached by WHEN it was entered, not by `expenseDate`: back-dating a
-     * receipt does not change which till the notes came out of. Card/bank
-     * spend never touches a drawer, so it stays unlinked.
-     */
-    const shiftId = await this.resolveShiftId(storeId, dto.paymentMethod, createdById);
+    const saved = await this.dataSource.transaction(async (manager) => {
+      /**
+       * A CASH expense entered while the author has a drawer open is money
+       * that physically left that drawer, so it must reduce their expected
+       * cash — otherwise the cashier who paid a supplier looks short at
+       * closing. A cashier or supervisor therefore cannot book ANY expense
+       * without an open drawer (one rule for staff, whatever the method);
+       * everyone else is linked when a drawer happens to be open.
+       *
+       * Attached by WHEN it was entered, not by `expenseDate`: back-dating a
+       * receipt does not change which till the notes came out of. Card/bank
+       * spend never touches a drawer, so it stays unlinked.
+       */
+      let shiftId: string | null;
+      if (gated) {
+        const openShiftId = await this.requireOpenShift(manager, storeId, actor as ExpenseActor);
+        shiftId = dto.paymentMethod === 'cash' ? openShiftId : null;
+      } else {
+        shiftId = await this.resolveShiftId(manager, storeId, dto.paymentMethod, createdById);
+      }
 
-    // `paymentMethod` is validated against the same list by @IsIn, but the DTO
-    // types it as a plain string so the DTO does not import the entity's union.
-    const expense = this.expensesRepository.create({
-      ...dto,
-      title: dto.title.trim(),
-      storeId,
-      createdById: createdById ?? null,
-      shiftId,
-      paymentMethod: (dto.paymentMethod as ExpensePaymentMethod) ?? null,
-      // The client sends its own local day; falling back to the server's is
-      // only for API callers that omit it.
-      expenseDate: dto.expenseDate ?? this.serverToday(),
-    } as Partial<Expense>);
+      // `paymentMethod` is validated against the same list by @IsIn, but the
+      // DTO types it as a plain string so it does not import the entity's union.
+      const expense = manager.create(Expense, {
+        ...dto,
+        title: dto.title.trim(),
+        storeId,
+        createdById: createdById ?? null,
+        shiftId,
+        paymentMethod: (dto.paymentMethod as ExpensePaymentMethod) ?? null,
+        // The client sends its own local day; falling back to the server's is
+        // only for API callers that omit it.
+        expenseDate: dto.expenseDate ?? this.serverToday(),
+      } as Partial<Expense>);
 
-    const saved = await this.expensesRepository.save(expense);
+      return manager.save(Expense, expense);
+    });
+
     return this.findOne(saved.id, storeId);
   }
 
@@ -185,8 +245,10 @@ export class ExpensesService {
     return expense;
   }
 
-  async update(id: string, storeId: string, dto: UpdateExpenseDto): Promise<Expense> {
+  async update(id: string, storeId: string, dto: UpdateExpenseDto, actor?: ExpenseActor): Promise<Expense> {
     const expense = await this.findOne(id, storeId);
+    // Editing an amount moves the drawer's expected cash as much as adding one.
+    await this.assertShiftIfGated(storeId, actor);
 
     if (dto.categoryId !== undefined) {
       await this.assertCategoryInStore(storeId, dto.categoryId);
@@ -204,10 +266,17 @@ export class ExpensesService {
     return this.findOne(id, storeId);
   }
 
-  async remove(id: string, storeId: string): Promise<{ message: string }> {
+  async remove(id: string, storeId: string, actor?: ExpenseActor): Promise<{ message: string }> {
     const expense = await this.findOne(id, storeId);
+    await this.assertShiftIfGated(storeId, actor);
     await this.expensesRepository.remove(expense);
     return { message: 'Expense deleted' };
+  }
+
+  /** The guard alone, for writes that do not stamp a row (edits, deletes). */
+  private async assertShiftIfGated(storeId: string, actor: ExpenseActor | undefined): Promise<void> {
+    if (!(await this.isShiftGated(storeId, actor))) return;
+    await this.requireOpenShift(this.dataSource.manager, storeId, actor as ExpenseActor);
   }
 
   /**

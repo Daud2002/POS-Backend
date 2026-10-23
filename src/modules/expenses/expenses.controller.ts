@@ -22,7 +22,7 @@ import {
   parseOptionalPaging,
   wantsCount,
 } from '@/common';
-import { ExpensesService } from './expenses.service';
+import { ExpensesService, type ExpenseActor } from './expenses.service';
 import { ExpenseCategoriesService } from './expense-categories.service';
 import {
   CreateExpenseDto,
@@ -30,6 +30,14 @@ import {
   CreateExpenseCategoryDto,
   UpdateExpenseCategoryDto,
 } from './dto';
+
+/**
+ * Who is writing: the id for the audit column, the effective role for the
+ * shift rule (cashiers and supervisors must have a drawer open).
+ */
+function actorOf(user: { id: string; effectiveRole?: string | null }): ExpenseActor {
+  return { id: user.id, effectiveRole: user.effectiveRole ?? null };
+}
 
 /**
  * The store's spend ledger.
@@ -174,9 +182,10 @@ export class ExpensesController {
   @Post()
   @RequirePermissions('expenses')
   @ApiOperation({ summary: 'Record an expense' })
+  @ApiResponse({ status: 409, description: 'Shifts are on and this cashier/supervisor has none open' })
   async create(@CurrentUser() user: any, @Body() dto: CreateExpenseDto) {
     const storeId = await this.tenantService.requireStoreId(user);
-    return this.expensesService.create(storeId, dto, user.id);
+    return this.expensesService.create(storeId, dto, actorOf(user));
   }
 
   @Patch(':id')
@@ -188,7 +197,7 @@ export class ExpensesController {
     @Body() dto: UpdateExpenseDto,
   ) {
     const storeId = await this.tenantService.requireStoreId(user);
-    return this.expensesService.update(id, storeId, dto);
+    return this.expensesService.update(id, storeId, dto, actorOf(user));
   }
 
   @Delete(':id')
@@ -196,6 +205,6 @@ export class ExpensesController {
   @ApiOperation({ summary: 'Delete an expense' })
   async remove(@CurrentUser() user: any, @Param('id') id: string) {
     const storeId = await this.tenantService.requireStoreId(user);
-    return this.expensesService.remove(id, storeId);
+    return this.expensesService.remove(id, storeId, actorOf(user));
   }
 }
