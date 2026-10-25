@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { User } from '../../entities/user.entity';
 import { Employee } from '../../entities/employee.entity';
 import { CreateUserDto, UpdateUserDto, UserRole } from './dto';
-import * as bcrypt from 'bcrypt';
+import * as bcrypt from 'bcryptjs';
 import { toPage, type Page } from '../../common/pagination';
 import { RefreshTokenService } from '../../auth/refresh-token.service';
 import { RealtimeGateway } from '../../realtime/realtime.gateway';

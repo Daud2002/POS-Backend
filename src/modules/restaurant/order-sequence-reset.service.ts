@@ -13,6 +13,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { CronJob } from 'cron';
 import { Repository } from 'typeorm';
 import { Store } from '../../entities';
+import { orderSequenceDay } from './order-sequence-day';
 
 /**
  * Rolls every restaurant's customer-facing order number back to 1 each morning.
@@ -60,8 +61,7 @@ export class OrderSequenceResetService implements OnModuleInit, OnModuleDestroy 
    * here means ConfigService is already populated.
    */
   onModuleInit(): void {
-    const hour = this.resolveHour();
-    const timeZone = this.resolveTimeZone();
+    const { hour, timeZone } = this.cutover();
 
     const job = CronJob.from({
       // Minute 0 of the cutover hour, every day.
@@ -82,6 +82,27 @@ export class OrderSequenceResetService implements OnModuleInit, OnModuleDestroy 
     this.logger.log(
       `Daily order-number reset scheduled for ${String(hour).padStart(2, '0')}:00 ${timeZone}`,
     );
+  }
+
+  /**
+   * The trading day an order punched at `now` belongs to.
+   *
+   * nextOrderSequence restarts the count at 1 when this differs from the day
+   * it last issued on. That is the reset that matters; the timer above only
+   * tidies the counter for restaurants that have not traded yet today, and a
+   * shop PC that was off at 6am still starts the morning at order #1.
+   */
+  currentDay(now = new Date()): string {
+    const { hour, timeZone } = this.cutover();
+    return orderSequenceDay(now, hour, timeZone);
+  }
+
+  private resolved?: { hour: number; timeZone: string };
+
+  /** Read once, so a bad env value is logged once rather than on every order. */
+  private cutover(): { hour: number; timeZone: string } {
+    this.resolved ??= { hour: this.resolveHour(), timeZone: this.resolveTimeZone() };
+    return this.resolved;
   }
 
   onModuleDestroy(): void {

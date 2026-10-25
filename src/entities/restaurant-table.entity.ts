@@ -39,10 +39,12 @@ export class RestaurantTable {
    * Note a handed-over order still holds its table: the kitchen has served the
    * food, but the guests are still sitting there and have not paid.
    */
+  // No `enumName`: TypeORM already names it restaurant_tables_status_enum, and
+  // spelling out the default makes its schema diff report the enum as changed
+  // forever (it reads a default-named type back as "no enumName").
   @Column({
     type: 'enum',
     enum: ['free', 'reserved'],
-    enumName: 'restaurant_tables_status_enum',
     default: 'free',
   })
   status: TableStatus;

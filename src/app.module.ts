@@ -28,12 +28,15 @@ import { PrintingModule } from './modules/printing/printing.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '.env',
+      // A store server runs as a Windows service, which starts in System32,
+      // so a bare '.env' would never be found there. The installer points
+      // this at %ProgramData%\TapNtrade\config\server.env instead.
+      envFilePath: process.env.TAPNTRADE_CONFIG || '.env',
     }),
     // Timer infrastructure for OrderSequenceResetService, which rolls every
     // restaurant's order number back to 1 each morning.
     ScheduleModule.forRoot(),
-    TypeOrmModule.forRoot(typeormConfig()),
+    TypeOrmModule.forRoot(typeormConfig({ runMigrations: true })),
     TypeOrmModule.forFeature([User, Category, Product, Customer, Order, OrderItem, Store, Employee, RefreshToken, RestaurantTable, Expense, ExpenseCategory, CashierShift, InventoryItem, InventoryMovement, ProductIngredient, AuditLog, SubscriptionPayment]),
     CommonModule,
     // Before AuthModule: the impersonation exchange writes its own audit row.

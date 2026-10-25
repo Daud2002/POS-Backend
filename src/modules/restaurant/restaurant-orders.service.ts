@@ -31,6 +31,8 @@ import {
   UpdateOrderStatusDto,
 } from './dto';
 import { TablesService } from './tables.service';
+import { OrderSequenceResetService } from './order-sequence-reset.service';
+import { NEXT_ORDER_SEQUENCE_SQL } from './order-sequence-day';
 import { ShiftsService } from '../shifts/shifts.service';
 import { CustomersService } from '../customers/customers.service';
 import { InventoryService } from '../inventory/inventory.service';
@@ -148,6 +150,7 @@ export class RestaurantOrdersService {
     private inventoryService: InventoryService,
     private realtime: RealtimeGateway,
     private dataSource: DataSource,
+    private orderSequenceReset: OrderSequenceResetService,
   ) {}
 
   // ---------------------------------------------------------------- reads
@@ -1219,18 +1222,15 @@ export class RestaurantOrdersService {
    * Numbering is per store and starts at 1, so the count is independent of
    * other restaurants on the platform.
    *
-   * The counter is zeroed daily by OrderSequenceResetService, which is why
-   * this returns 1 again each morning. That also means the number REPEATS
-   * across days: it identifies an order only together with its date.
+   * The first order of each trading day gets 1 again (the day comes from
+   * OrderSequenceResetService). That also means the number REPEATS across
+   * days: it identifies an order only together with its date.
    */
   private async nextOrderSequence(manager: EntityManager, storeId: string): Promise<number> {
-    const raw = await manager.query(
-      `UPDATE "stores"
-          SET "orderSequence" = COALESCE("orderSequence", 0) + 1
-        WHERE "id" = $1
-      RETURNING "orderSequence"`,
-      [storeId],
-    );
+    const raw = await manager.query(NEXT_ORDER_SEQUENCE_SQL, [
+      storeId,
+      this.orderSequenceReset.currentDay(),
+    ]);
 
     // TypeORM returns `[rows, affectedCount]` for UPDATE/DELETE but a bare
     // `rows` array for SELECT (PostgresQueryRunner, `switch (raw.command)`).

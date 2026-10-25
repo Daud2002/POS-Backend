@@ -5,7 +5,7 @@ import { Employee, RESTAURANT_DESIGNATIONS } from '@/entities';
 import { User } from '@/entities';
 import { TenantService, toPage, sanitizePermissions, grantablePermissionsFor, basePermissionFor, resolvePermissions, defaultGrantsFor, type Page } from '@/common';
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto';
-import * as bcrypt from 'bcrypt';
+import * as bcrypt from 'bcryptjs';
 import { RefreshTokenService } from '@/auth/refresh-token.service';
 import { RealtimeGateway } from '@/realtime/realtime.gateway';
 

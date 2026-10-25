@@ -6,33 +6,21 @@ dotenv.config();
 
 import { DataSource } from 'typeorm';
 import { typeormConfig } from '../src/database/typeorm.config';
-import * as entities from '../src/entities';
+import { ALL_ENTITIES } from '../src/database/entities';
 
 /**
- * Every entity, not just the new ones: TypeORM refuses to build metadata for
- * half a graph, and the diff must see the whole schema anyway.
- */
-const ALL_ENTITIES = (Object.values(entities) as unknown[]).filter(
-  (value) => typeof value === 'function',
-) as Function[];
-
-/**
- * Prints the DDL that the NEXT backend start would run — without running it.
+ * Prints the DDL that separates the database in .env from the entities in
+ * this checkout — without running any of it.
  *
- * The app boots with `synchronize: true` against whatever database `.env`
- * points at, which in this project is production. There are no migrations,
- * so the only way to know what a restart will do to the schema is to ask
- * TypeORM's schema builder for its plan: this is exactly what
- * `migration:generate` does under the hood, with the query runner in
- * "memory" mode so nothing is executed. The only statements that reach the
+ * The backend no longer uses `synchronize`; schema changes ship as migrations
+ * (src/database/migrations) and run at boot. This is the drift check to run
+ * before deploying a branch with new migrations: the statements printed must
+ * be exactly what those migrations do. Anything else means production has
+ * drifted from the entities, and a migration written against them may fail.
+ * The query runner is in "memory" mode, so the only statements that reach the
  * database are the catalogue reads that compare entities with tables.
  *
  *   npm run db:schema-diff
- *
- * Read the output before restarting. Expect only CREATE TABLE / CREATE INDEX
- * and ALTER TABLE … ADD nullable columns; a DROP, a type change or a NOT NULL
- * addition means an entity no longer matches what is deployed and must be
- * fixed before anything is restarted.
  */
 async function main() {
   const dataSource = new DataSource({
@@ -48,12 +36,12 @@ async function main() {
     const statements = plan.upQueries;
 
     if (!statements.length) {
-      console.log('\n✅ Schema is in sync — a backend restart would run no DDL.\n');
+      console.log('\n✅ Schema is in sync with the entities: there is nothing for a migration to do.\n');
       return;
     }
 
     console.log(
-      `\n⚠️  A backend restart (synchronize: true) would run ${statements.length} statement(s) against ` +
+      `\n⚠️  ${statements.length} statement(s) separate the entities from ` +
         `${process.env.DATABASE_HOST}/${process.env.DATABASE_NAME}:\n`,
     );
     for (const statement of statements) {
@@ -69,7 +57,7 @@ async function main() {
     if (destructive.length) {
       console.log(
         `\n🛑 ${destructive.length} statement(s) above drop, retype or tighten existing columns. ` +
-          'Do NOT restart until the entity that caused it is corrected.\n',
+          'Unless a migration in this branch does exactly this, do NOT deploy until the drift is understood.\n',
       );
       process.exitCode = 2;
     } else {
