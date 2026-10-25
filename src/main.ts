@@ -6,30 +6,28 @@ import type { Request, Response } from 'express';
 import { promises as fs } from 'fs';
 import { AppModule } from './app.module';
 import { UPLOAD_DIR, LOGO_DIR } from './modules/stores/stores.service';
+import { deploymentMode } from './config/deployment';
+import { isAllowedOrigin } from './config/cors';
 
 async function bootstrap() {
   // Typed as NestExpressApplication so useStaticAssets() below is available.
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
-  // Production sits behind a proxy that forwards /api/*; without this every
-  // client shares the proxy's address in `req.ip`, which the audit log and
-  // the impersonation rate limit both key on.
-  app.set('trust proxy', 1);
+  const mode = deploymentMode();
 
-  const allowedOrigins = [
-    'http://localhost:8080',
-    'http://localhost:8081',
-    'http://localhost:3000',
-    'https://tapntrade.store',
-    'https://pos.tapntrade.store'
-  ];
+  // The cloud sits behind a proxy that forwards /api/*; without this every
+  // client shares the proxy's address in `req.ip`, which the audit log and
+  // the impersonation rate limit both key on. A store server has no proxy in
+  // front of it, so trusting X-Forwarded-For there would let any device on
+  // the shop Wi-Fi pick its own `req.ip` and dodge the login rate limit.
+  if (mode === 'cloud') app.set('trust proxy', 1);
 
   app.enableCors({
     origin: (origin, callback) => {
       // Allow requests with no origin (like mobile apps or Postman)
       if (!origin) return callback(null, true);
 
-      if (allowedOrigins.includes(origin)) {
+      if (isAllowedOrigin(origin, mode)) {
         callback(null, true); // allow this origin
       } else {
         callback(new Error('Not allowed by CORS')); // block
@@ -78,26 +76,31 @@ async function bootstrap() {
     res.status(404).end();
   });
 
-  // Swagger configuration
-  const config = new DocumentBuilder()
-    .setTitle('POS System API')
-    .setDescription('Point of Sale System API Documentation')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .addTag('Auth', 'Authentication endpoints')
-    .addTag('Products', 'Product management endpoints')
-    .addTag('Categories', 'Category management endpoints')
-    .addTag('Customers', 'Customer management endpoints')
-    .addTag('Orders', 'Order management endpoints')
-    .build();
+  // Not on a store server: customers share the shop Wi-Fi, and an open map of
+  // every endpoint is no help to anyone legitimate there.
+  if (mode === 'cloud') {
+    const config = new DocumentBuilder()
+      .setTitle('POS System API')
+      .setDescription('Point of Sale System API Documentation')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .addTag('Auth', 'Authentication endpoints')
+      .addTag('Products', 'Product management endpoints')
+      .addTag('Categories', 'Category management endpoints')
+      .addTag('Customers', 'Customer management endpoints')
+      .addTag('Orders', 'Order management endpoints')
+      .build();
 
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('docs', app, document);
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('docs', app, document);
+  }
 
   const port = process.env.PORT || 3000;
   await app.listen(port);
-  console.log(`Application is running on: http://localhost:${port}`);
-  console.log(`Swagger documentation available at: http://localhost:${port}/docs`);
+  console.log(`Application is running on: http://localhost:${port} (${mode})`);
+  if (mode === 'cloud') {
+    console.log(`Swagger documentation available at: http://localhost:${port}/docs`);
+  }
 }
 
 bootstrap();

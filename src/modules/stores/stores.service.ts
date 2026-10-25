@@ -6,7 +6,7 @@ import { User } from '@/entities';
 import { Employee } from '@/entities';
 import { CreateStoreDto, UpdateStoreDto, UpdateStoreSettingsDto } from './dto';
 import { toPage, type Page } from '@/common';
-import * as bcrypt from 'bcrypt';
+import * as bcrypt from 'bcryptjs';
 import { promises as fs } from 'fs';
 import { join, basename, extname } from 'path';
 

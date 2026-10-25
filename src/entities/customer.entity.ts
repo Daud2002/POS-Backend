@@ -10,6 +10,7 @@ import {
 import { Order } from './order.entity';
 
 @Entity('customers')
+@Index('UQ_customers_store_email', ['storeId', 'email'], { unique: true, where: '"email" IS NOT NULL' })
 export class Customer {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -30,7 +31,12 @@ export class Customer {
   @Column()
   name: string;
 
-  @Column({ nullable: true, unique: true })
+  /**
+   * Unique within a store, not across the platform. Two restaurants can both
+   * know a customer by the same address, and a store server can create one
+   * offline without being able to check every other tenant's book.
+   */
+  @Column({ nullable: true })
   email: string;
 
   /**

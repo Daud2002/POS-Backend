@@ -44,12 +44,23 @@ export class Store {
    * order transaction — a read-then-write would hand two concurrent waiters
    * the same number.
    *
-   * OrderSequenceResetService zeroes this every morning (6am by default), so
-   * the value is "last number issued TODAY", not a lifetime total. Nothing may
+   * The number starts again at 1 every morning (6am by default), so the
+   * value is "last number issued TODAY", not a lifetime total. Nothing may
    * treat it as unique or monotonic across days.
    */
   @Column({ type: 'int', default: 0 })
   orderSequence: number;
+
+  /**
+   * The trading day `orderSequence` was last issued on (see
+   * order-sequence-day.ts). The first order of a new day restarts the count
+   * at 1 by comparing against this, so the reset no longer depends on a 6am
+   * timer firing: a shop's own PC is often switched off at that hour, and a
+   * missed cron tick is never run later. NULL until the first order after
+   * this column was added; that one continues the count it found.
+   */
+  @Column({ type: 'date', nullable: true })
+  orderSequenceDay: string | null;
 
   @Column({
     type: 'varchar',
