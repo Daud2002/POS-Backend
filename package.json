@@ -43,7 +43,9 @@
     "db:schema-diff": "ts-node scripts/schema-diff.ts",
     "migration:generate": "ts-node scripts/migration-generate.ts",
     "sync:migration": "ts-node scripts/sync-migration.ts",
-    "store:dev": "node scripts/store-dev.mjs"
+    "store:dev": "node scripts/store-dev.mjs",
+    "db:predeploy-check": "ts-node scripts/predeploy-check.ts",
+    "db:backup": "ts-node scripts/backup-json.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.3.0",
