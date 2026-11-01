@@ -32,3 +32,6 @@ export { InventoryMovement, INVENTORY_MOVEMENT_TYPES } from './inventory-movemen
 export type { InventoryMovementType } from './inventory-movement.entity';
 export { AuditLog } from './audit-log.entity';
 export { SubscriptionPayment } from './subscription-payment.entity';
+export { StoreServer } from './store-server.entity';
+export type { StoreServerStatus } from './store-server.entity';
+export { StorePairingCode } from './store-pairing-code.entity';

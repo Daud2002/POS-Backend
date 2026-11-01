@@ -22,3 +22,10 @@ export function deploymentMode(env: NodeJS.ProcessEnv = process.env): Deployment
 
 export const isStoreServer = (env: NodeJS.ProcessEnv = process.env) =>
   deploymentMode(env) === 'store';
+
+/**
+ * How long a store server keeps signing staff in without reaching the cloud.
+ * Long enough for any real outage; short enough that a store deactivated in
+ * the cloud cannot keep trading by keeping its PC offline.
+ */
+export const LEASE_DAYS = 14;

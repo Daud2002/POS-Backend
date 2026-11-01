@@ -2,9 +2,13 @@
 import { Baseline1792768409500 } from './1792768409500-Baseline';
 import { AddOrderSequenceDay1792768639894 } from './1792768639894-AddOrderSequenceDay';
 import { CustomerEmailPerStore1792768692431 } from './1792768692431-CustomerEmailPerStore';
+import { AddStoreServers1793300599225 } from './1793300599225-AddStoreServers';
+import { SyncCore1793302226260 } from './1793302226260-SyncCore';
 
 export const MIGRATIONS: Function[] = [
   Baseline1792768409500,
   AddOrderSequenceDay1792768639894,
   CustomerEmailPerStore1792768692431,
+  AddStoreServers1793300599225,
+  SyncCore1793302226260,
 ];

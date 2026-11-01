@@ -1,4 +1,4 @@
-import { NestFactory } from '@nestjs/core';
+import { HttpAdapterHost, NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -8,12 +8,33 @@ import { AppModule } from './app.module';
 import { UPLOAD_DIR, LOGO_DIR } from './modules/stores/stores.service';
 import { deploymentMode } from './config/deployment';
 import { isAllowedOrigin } from './config/cors';
+import { StoreServerModeFilter } from './sync/store-server-mode.filter';
+import { TlsFiles, ensureTls, localHosts } from './store-server/tls';
+import {
+  guardStoreServerRoutes,
+  httpPort,
+  httpsPort,
+  serveWebApp,
+  setupRoutes,
+  startHttpListener,
+} from './store-server/hosting';
 
 async function bootstrap() {
-  // Typed as NestExpressApplication so useStaticAssets() below is available.
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
-
+  // .env is already loaded: AppModule's import above ran ConfigModule.forRoot().
   const mode = deploymentMode();
+
+  // A store server is HTTPS from the first request, with the shop's own CA.
+  let tls: TlsFiles | null = mode === 'store' ? ensureTls(localHosts()) : null;
+  if (tls) process.env.TNT_CA_SHA256 = tls.caSha256;
+
+  // Typed as NestExpressApplication so useStaticAssets() below is available.
+  const app = await NestFactory.create<NestExpressApplication>(
+    AppModule,
+    tls ? { httpsOptions: { key: tls.key, cert: tls.cert } } : undefined,
+  );
+
+  // Before any route: blocks cloud-only endpoints, sends plain HTTP to HTTPS.
+  if (mode === 'store') guardStoreServerRoutes(app);
 
   // The cloud sits behind a proxy that forwards /api/*; without this every
   // client shares the proxy's address in `req.ip`, which the audit log and
@@ -36,8 +57,15 @@ async function bootstrap() {
     credentials: true,
   });
 
+  // Express's default 100 kB is too small for a sync push: a page carries up
+  // to 500 full rows, and a store's logo alone can be 500 kB.
+  app.useBodyParser('json', { limit: '25mb' });
+
   // Global validation pipe
   app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
+
+  // The sync's single-writer refusals become a 409 with a code clients act on.
+  app.useGlobalFilters(new StoreServerModeFilter(app.get(HttpAdapterHost).httpAdapter));
 
   // Add API prefix
   app.setGlobalPrefix('api');
@@ -95,12 +123,30 @@ async function bootstrap() {
     SwaggerModule.setup('docs', app, document);
   }
 
+  if (mode === 'store') {
+    setupRoutes(app, () => tls!);
+    const web = serveWebApp(app);
+    await app.listen(httpsPort());
+    startHttpListener(app);
+    console.log(`Store server running on https://localhost:${httpsPort()} · setup on http://localhost:${httpPort()}/setup`);
+    console.log(web ? `Serving the web app from ${web}` : 'No web app build found (set WEB_DIST_DIR)');
+
+    // DHCP may move the PC to a new address; re-issue the certificate for it
+    // in place, without a restart, and without needing the internet.
+    setInterval(() => {
+      const next = ensureTls(localHosts());
+      if (next.reissued) {
+        (app.getHttpServer() as import('https').Server).setSecureContext({ key: next.key, cert: next.cert });
+        tls = next;
+      }
+    }, 5 * 60_000).unref();
+    return;
+  }
+
   const port = process.env.PORT || 3000;
   await app.listen(port);
   console.log(`Application is running on: http://localhost:${port} (${mode})`);
-  if (mode === 'cloud') {
-    console.log(`Swagger documentation available at: http://localhost:${port}/docs`);
-  }
+  console.log(`Swagger documentation available at: http://localhost:${port}/docs`);
 }
 
 bootstrap();

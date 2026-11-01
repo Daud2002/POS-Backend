@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { isStoreServer } from '../../config/deployment';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { Expense, ExpenseCategory, type ExpensePaymentMethod } from '@/entities';
 import { toPage, type Page } from '@/common';
@@ -96,6 +97,9 @@ export class ExpensesService {
     createdById: string | undefined,
   ): Promise<string | null> {
     if (paymentMethod !== 'cash' || !createdById) return null;
+    // An owner booking cash from home did not take it out of the shop's
+    // drawer, and the drawer's totals are the store server's to keep.
+    if (!isStoreServer() && (await this.runsOnStoreServer(manager, storeId))) return null;
 
     try {
       const stamp = await this.shiftsService.stampSettlement(manager, storeId, createdById, {
@@ -105,6 +109,11 @@ export class ExpensesService {
     } catch {
       return null;
     }
+  }
+
+  private async runsOnStoreServer(manager: EntityManager, storeId: string): Promise<boolean> {
+    const [store] = await manager.query(`SELECT "operationMode" FROM stores WHERE id = $1`, [storeId]);
+    return store?.operationMode === 'server';
   }
 
   /** A category id must belong to the same store, or it is not a real link. */

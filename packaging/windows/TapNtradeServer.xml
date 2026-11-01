@@ -1,0 +1,28 @@
+<!--
+  WinSW service definition for the TapNtrade store server.
+  %BASE% is the folder this file sits in (…\TapNtrade Server\winsw).
+-->
+<service>
+  <id>TapNtradeServer</id>
+  <name>TapNtrade Server</name>
+  <description>Keeps TapNtrade running in this shop without internet, and syncs with the cloud when it can.</description>
+  <executable>%BASE%\..\node\node.exe</executable>
+  <arguments>"%BASE%\..\app\dist\main.js"</arguments>
+  <workingdirectory>%BASE%\..\app</workingdirectory>
+  <depend>TapNtradeDB</depend>
+  <startmode>Automatic</startmode>
+  <delayedAutoStart>false</delayedAutoStart>
+  <env name="TAPNTRADE_CONFIG" value="%ProgramData%\TapNtrade\config\server.env" />
+  <env name="TZ" value="UTC" />
+  <env name="NODE_ENV" value="production" />
+  <onfailure action="restart" delay="5 sec" />
+  <onfailure action="restart" delay="20 sec" />
+  <onfailure action="restart" delay="60 sec" />
+  <resetfailure>1 hour</resetfailure>
+  <logpath>%ProgramData%\TapNtrade\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+  <stoptimeout>15 sec</stoptimeout>
+</service>
