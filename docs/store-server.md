@@ -39,16 +39,26 @@ Code lives in:
 | `src/store-server/` | HTTPS, the setup page and hosting |
 | `packaging/windows/` | The installer |
 
-## Try it on a Mac
+## Try it on a laptop (Mac)
+
+Build the web app the store server serves once: `npm run build:store` in POS-Frontend.
 
 ```
 npm run store:dev -- --smoke   # pairs, activates, takes an order, syncs; prints ✓ per step
-npm run store:dev              # keeps a cloud (http://localhost:3100) and a store server
-                               # (https://localhost:8443, setup http://localhost:8080/setup) running
+npm run store:dev              # a practice cloud (http://localhost:3100) and a store server
+                               # (https://localhost:8443, setup http://localhost:8088/setup)
+                               # with a seeded restaurant. Press c to cut / restore the
+                               # "internet" (stops the practice cloud), q to quit.
+npm run store:dev -- --cloud https://api.tapntrade.store/api
+                               # only the store server, linked to the real cloud; data kept
+                               # in ~/.tapntrade-store-laptop (--reset wipes it). Pair it
+                               # with a TEST store: activating moves that store's orders here.
 ```
 
-Both run on throwaway embedded Postgres instances. Neither reads `.env`, so production is never
-touched.
+None of these read `.env`, so the practice runs never touch production. In practice mode,
+open the cloud web app with `VITE_API_URL=http://localhost:3100/api npm run dev` in
+POS-Frontend. Its logins are `owner@snack.test` / `owner123` and `waiter@snack.test` /
+`waiter123`.
 
 ## Build the installer
 

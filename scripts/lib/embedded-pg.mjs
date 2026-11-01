@@ -6,34 +6,39 @@
 //
 // Nothing here reads .env, so it can never point at the production database.
 import EmbeddedPostgres from 'embedded-postgres';
+import { existsSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 /**
- * Initialises and starts a fresh cluster in a temp folder on `port`, with one
- * empty database. `stop()` shuts it down and deletes the folder.
+ * Starts a cluster on `port` with one database.
+ *
+ * By default a fresh cluster in a temp folder, which `stop()` deletes. With
+ * `dir`, a cluster that is kept there between runs (created on the first),
+ * so a store server tried out on a laptop keeps its data and pairing.
  *
  * UTF8 + C locale + UTC, matching what the store server installer sets up, so
  * a generated migration behaves the same on a shop PC.
  */
-export async function startEmbeddedPostgres({ port, database = 'tapntrade' }) {
-  const databaseDir = await mkdtemp(path.join(os.tmpdir(), 'tnt-pg-'));
+export async function startEmbeddedPostgres({ port, database = 'tapntrade', dir }) {
+  const databaseDir = dir ?? (await mkdtemp(path.join(os.tmpdir(), 'tnt-pg-')));
+  const exists = existsSync(path.join(databaseDir, 'PG_VERSION'));
   const pg = new EmbeddedPostgres({
     databaseDir,
     port,
     user: 'postgres',
     password: 'postgres',
-    persistent: false,
+    persistent: !!dir,
     initdbFlags: ['--encoding=UTF8', '--locale=C'],
     postgresFlags: ['-c', 'timezone=UTC'],
     onLog: () => {},
     onError: (error) => console.error('[embedded-postgres]', error),
   });
 
-  await pg.initialise();
+  if (!exists) await pg.initialise();
   await pg.start();
-  await pg.createDatabase(database);
+  if (!exists) await pg.createDatabase(database);
 
   return {
     config: { host: '127.0.0.1', port, username: 'postgres', password: 'postgres', database },
