@@ -6,12 +6,16 @@ import { ExpensesService, OPEN_SHIFT_FOR_EXPENSES } from './expenses.service';
  * shifts on cannot touch an expense without an open drawer. Everyone else is
  * linked to a drawer when one happens to be open, and never blocked.
  */
-function setup(options: { enforced?: boolean; openShiftId?: string | null } = {}) {
+function setup(
+  options: { enforced?: boolean; openShiftId?: string | null; operationMode?: 'cloud' | 'server' } = {},
+) {
   const enforced = options.enforced ?? true;
   const openShiftId = options.openShiftId === undefined ? null : options.openShiftId;
 
   const saved: any[] = [];
   const manager = {
+    // The store's operation mode, the only raw query create() makes.
+    query: jest.fn(async () => [{ operationMode: options.operationMode ?? 'cloud' }]),
     create: jest.fn((_entity: unknown, row: any) => ({ ...row })),
     save: jest.fn(async (_entity: unknown, row: any) => {
       const withId = { id: 'exp-1', ...row };
@@ -109,6 +113,14 @@ describe('ExpensesService.create — the shift rule', () => {
       { enforce: false },
     );
     expect(withDrawer.saved[0]).toMatchObject({ shiftId: 'shift-2' });
+  });
+
+  it('never links an owner’s cash spend to a drawer when the store runs its own server', async () => {
+    // Booked from home on the cloud: the drawer's totals are the shop's to keep.
+    const remote = setup({ openShiftId: 'shift-2', operationMode: 'server' });
+    await remote.service.create('store-1', dto, owner);
+    expect(remote.shiftsService.stampSettlement).not.toHaveBeenCalled();
+    expect(remote.saved[0]).toMatchObject({ shiftId: null });
   });
 
   it('never blocks a waiter granted the ledger — they cannot open a shift', async () => {

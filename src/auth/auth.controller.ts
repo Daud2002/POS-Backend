@@ -6,6 +6,7 @@ import {
   UseGuards,
   Request,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
 import { Request as ExpressRequest } from 'express';
@@ -60,6 +61,10 @@ export class AuthController {
     const inactive = await this.authService.inactiveReason(user);
     if (inactive) {
       throw new BadRequestException(inactive);
+    }
+    const elsewhere = await this.authService.siteReason(user);
+    if (elsewhere) {
+      throw new ConflictException({ statusCode: 409, ...elsewhere });
     }
     return this.authService.login(user, req.headers['user-agent']);
   }

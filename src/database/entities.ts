@@ -16,6 +16,8 @@ import {
   RefreshToken,
   RestaurantTable,
   Store,
+  StorePairingCode,
+  StoreServer,
   SubscriptionPayment,
   User,
 } from '../entities';
@@ -49,4 +51,6 @@ export const ALL_ENTITIES = [
   ExpenseCategory,
   AuditLog,
   SubscriptionPayment,
+  StoreServer,
+  StorePairingCode,
 ];

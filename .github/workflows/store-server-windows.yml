@@ -1,0 +1,48 @@
+# Builds TapNtradeServerSetup.exe, the store server installer for a shop's
+# cashier PC. Manual only: a new installer is a deliberate release, not a
+# side effect of every push to Main.
+#
+# Needs repository secrets:
+#   FRONTEND_REPO_TOKEN   read access to the POS-Frontend repository
+#   SIGN_CERT_PFX_BASE64  code-signing certificate (.pfx, base64) — optional; unsigned builds warn on install
+#   SIGN_CERT_PASSWORD    its password
+name: Store server installer (Windows)
+
+on:
+  workflow_dispatch:
+    inputs:
+      frontend_ref:
+        description: POS-Frontend branch or tag to bundle
+        default: main
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/POS-Frontend
+          ref: ${{ inputs.frontend_ref }}
+          token: ${{ secrets.FRONTEND_REPO_TOKEN }}
+          path: POS-Frontend
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        env:
+          SIGN_CERT_PFX_BASE64: ${{ secrets.SIGN_CERT_PFX_BASE64 }}
+          SIGN_CERT_PASSWORD: ${{ secrets.SIGN_CERT_PASSWORD }}
+        run: ./packaging/windows/build.ps1 -FrontendDir ${{ github.workspace }}/POS-Frontend
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TapNtradeServerSetup
+          path: packaging/windows/out/TapNtradeServerSetup.exe

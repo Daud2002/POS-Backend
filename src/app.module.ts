@@ -23,6 +23,7 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { PrintingModule } from './modules/printing/printing.module';
+import { SyncModule } from './sync/sync.module';
 
 @Module({
   imports: [
@@ -57,6 +58,8 @@ import { PrintingModule } from './modules/printing/printing.module';
     ReportsModule,
     InventoryModule,
     PrintingModule,
+    // After ConfigModule above: register() reads DEPLOYMENT_MODE from the loaded .env.
+    SyncModule.register(),
   ],
   controllers: [AppController],
   providers: [],

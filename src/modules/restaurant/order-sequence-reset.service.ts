@@ -14,6 +14,7 @@ import { CronJob } from 'cron';
 import { Repository } from 'typeorm';
 import { Store } from '../../entities';
 import { orderSequenceDay } from './order-sequence-day';
+import { isStoreServer } from '../../config/deployment';
 
 /**
  * Rolls every restaurant's customer-facing order number back to 1 each morning.
@@ -136,6 +137,10 @@ export class OrderSequenceResetService implements OnModuleInit, OnModuleDestroy 
         // number of restaurants that actually traded yesterday.
         .where('"accountType" = :accountType', { accountType: 'restaurant' })
         .andWhere('"orderSequence" <> 0')
+        // On the cloud, a store run by its in-shop server counts its own
+        // orders; the sync guard would refuse this write for it and so fail
+        // the whole statement for every restaurant.
+        .andWhere(isStoreServer() ? 'true' : `"operationMode" = 'cloud'`)
         .execute();
 
       const affected = result.affected ?? 0;

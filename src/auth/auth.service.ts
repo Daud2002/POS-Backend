@@ -7,6 +7,7 @@ import { User, Store, Employee } from '../entities';
 import { RefreshTokenService } from './refresh-token.service';
 import { resolveEffectiveRole } from '../common/roles';
 import { resolvePermissions } from '../common/permissions';
+import { isStoreServer, LEASE_DAYS } from '../config/deployment';
 
 @Injectable()
 export class AuthService {
@@ -53,6 +54,45 @@ export class AuthService {
       .getExists();
 
     return storeInactive ? 'This store has been deactivated.' : null;
+  }
+
+  /**
+   * Why this user may not sign in HERE, on this deployment, or null.
+   *
+   * - On the cloud: staff of a store that runs on its in-shop server. Their
+   *   work happens on the shop's server anyway, and refusing them here means
+   *   a password overheard on the shop Wi-Fi (customers share it) is no use
+   *   from anywhere else. Owners can still sign in from home.
+   * - On a store server: everyone, once it has not reached the cloud for
+   *   LEASE_DAYS. A deactivated or unpaid store only hears about it from the
+   *   cloud, so a PC kept offline must not run forever.
+   */
+  async siteReason(user: Pick<User, 'id' | 'role'>): Promise<{ code: string; message: string } | null> {
+    if (isStoreServer()) {
+      const [state] = await this.usersRepository.query(`SELECT last_sync_at, bootstrapped_at FROM sync_state`);
+      const last = state?.last_sync_at ?? state?.bootstrapped_at;
+      if (last && Date.now() - new Date(last).getTime() > LEASE_DAYS * 86_400_000) {
+        return {
+          code: 'STORE_SERVER_OFFLINE_TOO_LONG',
+          message: `This store server has not reached the internet for ${LEASE_DAYS} days. Connect it to the internet to keep signing in.`,
+        };
+      }
+      return null;
+    }
+
+    if (user.role !== 'employee' && user.role !== 'cashier') return null;
+    const serverMode = await this.employeesRepository
+      .createQueryBuilder('employee')
+      .innerJoin('employee.store', 'store')
+      .where('employee.userId = :userId', { userId: user.id })
+      .andWhere(`store."operationMode" = 'server'`)
+      .getExists();
+    return serverMode
+      ? {
+          code: 'STORE_SERVER_MODE',
+          message: "This store runs on its in-shop server. Connect to the shop's Wi-Fi and sign in there.",
+        }
+      : null;
   }
 
   async getUserWithStore(user: any) {
@@ -216,7 +256,9 @@ export class AuthService {
     );
 
     const user = await this.usersRepository.findOne({ where: { id: userId } });
-    const inactive = user ? await this.inactiveReason(user) : 'Account is no longer active';
+    const inactive = user
+      ? ((await this.inactiveReason(user)) ?? (await this.siteReason(user))?.message ?? null)
+      : 'Account is no longer active';
     if (!user || inactive) {
       await this.refreshTokenService.revokeAllForUser(userId);
       throw new UnauthorizedException(inactive);

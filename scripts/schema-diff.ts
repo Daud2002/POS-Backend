@@ -26,7 +26,10 @@ async function main() {
   const dataSource = new DataSource({
     ...(typeormConfig() as any),
     entities: ALL_ENTITIES,
+    // Never change anything, whatever .env says (DROP_SCHEMA=true would wipe it).
     synchronize: false,
+    migrationsRun: false,
+    dropSchema: false,
     logging: false,
   });
 

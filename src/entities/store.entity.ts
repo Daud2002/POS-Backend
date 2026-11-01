@@ -62,6 +62,28 @@ export class Store {
   @Column({ type: 'date', nullable: true })
   orderSequenceDay: string | null;
 
+  /**
+   * 'cloud': orders are taken through api.tapntrade.store, as always.
+   * 'server': the store runs on its own in-shop store server, which keeps
+   * working without internet. The cloud then refuses to take orders, move
+   * tables or open shifts for it (see src/sync), so there is only ever one
+   * place writing them and order numbers, tables and drawers cannot clash.
+   */
+  @Column({ type: 'varchar', length: 16, default: 'cloud' })
+  operationMode: 'cloud' | 'server';
+
+  /** The store server allowed to write while in 'server' mode. */
+  @Column({ type: 'uuid', nullable: true })
+  writerServerId: string | null;
+
+  /**
+   * Bumped on every change of writer. A store server that comes back after
+   * being replaced carries an older epoch, which is how it learns it no
+   * longer owns the store.
+   */
+  @Column({ type: 'int', default: 0 })
+  writerEpoch: number;
+
   @Column({
     type: 'varchar',
     length: 50,
