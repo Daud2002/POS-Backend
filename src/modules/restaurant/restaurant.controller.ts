@@ -229,18 +229,20 @@ export class RestaurantController {
   }
 
   /**
-   * The cashier's counterpart to adding a round. Not a DELETE route: it takes
-   * a body (which lines, how many) and it is a money decision, so it carries
-   * the same claim rule as printing and settling.
+   * The counterpart to adding a round. Not a DELETE route: it takes a body
+   * (which lines, how many). Waiters may strike lines at the table; every
+   * removal is written to the order's history with who made it.
    */
   @Post('orders/:id/items/remove')
-  @Roles('cashier', 'supervisor', 'restaurant_owner')
+  @Roles('waiter', 'cashier', 'supervisor', 'restaurant_owner')
   @ApiOperation({
     summary: 'Strike lines (or part of a line) off a live order. Reprint the bill afterwards.',
   })
   @ApiResponse({ status: 400, description: 'Unknown line, or more than the line holds' })
-  @ApiResponse({ status: 403, description: 'Another cashier printed this bill' })
-  @ApiResponse({ status: 409, description: 'Not live, or nothing would be left — cancel instead' })
+  @ApiResponse({
+    status: 409,
+    description: 'Not live, nothing would be left (cancel instead), or a cashier without an open shift',
+  })
   async removeItems(
     @CurrentUser() user: any,
     @Param('id') id: string,
@@ -294,7 +296,6 @@ export class RestaurantController {
   @Post('orders/:id/settle')
   @Roles('cashier', 'supervisor', 'restaurant_owner')
   @ApiOperation({ summary: 'Mark a printed bill paid, complete the order, and free the table' })
-  @ApiResponse({ status: 403, description: 'Another cashier printed this bill' })
   @ApiResponse({
     status: 409,
     description: 'The bill has not been printed, or shifts are on and the cashier has none open',
@@ -312,7 +313,7 @@ export class RestaurantController {
   @Post('orders/:id/cancel')
   @Roles('cashier', 'supervisor', 'restaurant_owner')
   @ApiOperation({ summary: 'Cancel an order and free its table' })
-  @ApiResponse({ status: 403, description: 'Another cashier printed this bill' })
+  @ApiResponse({ status: 409, description: 'Already settled, or shifts are on and the cashier has none open' })
   async cancel(@CurrentUser() user: any, @Param('id') id: string) {
     const store = await this.tenantService.requireRestaurantStore(user);
     return this.ordersService.cancel(id, store.id, viewerOf(user));

@@ -12,6 +12,7 @@ import {
 } from '@/common';
 import { ProfitReportService } from './profit-report.service';
 import { PlatformOverviewService } from './platform-overview.service';
+import { ItemSalesService } from './item-sales.service';
 
 /**
  * Store-wide figures that both account types share.
@@ -30,6 +31,7 @@ export class ReportsController {
   constructor(
     private profitReportService: ProfitReportService,
     private platformOverviewService: PlatformOverviewService,
+    private itemSalesService: ItemSalesService,
     private tenantService: TenantService,
   ) {}
 
@@ -65,5 +67,28 @@ export class ReportsController {
     const store = await this.tenantService.getStore(storeId);
     const includeExpenses = resolvePermissions(user).includes('expenses');
     return this.profitReportService.profit(store, tz, includeExpenses);
+  }
+
+  @Get('item-sales')
+  @RequirePermissions('dashboard')
+  @ApiOperation({
+    summary: 'Quantity sold and sales per menu item over a window, optionally split per day or month',
+  })
+  @ApiQuery({ name: 'from', required: false, description: 'ISO instant, inclusive (settled at or after).' })
+  @ApiQuery({ name: 'to', required: false, description: 'ISO instant, exclusive.' })
+  @ApiQuery({ name: 'tz', required: false, description: "The caller's IANA zone, for day and month buckets." })
+  @ApiQuery({ name: 'groupBy', required: false, enum: ['none', 'day', 'month'] })
+  @ApiQuery({ name: 'category', required: false, description: 'Only lines sold under this category name.' })
+  async itemSales(
+    @CurrentUser() user: any,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('tz') tz?: string,
+    @Query('groupBy') groupBy?: string,
+    @Query('category') category?: string,
+  ) {
+    const storeId = await this.tenantService.requireStoreId(user);
+    const store = await this.tenantService.getStore(storeId);
+    return this.itemSalesService.report(store, { from, to, tz, groupBy, category });
   }
 }

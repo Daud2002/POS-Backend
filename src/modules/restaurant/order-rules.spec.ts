@@ -4,6 +4,7 @@ import {
   billPrintMode,
   canPrintBills,
   computeTotals,
+  holdsFromKitchen,
   initialStatus,
   mayPrintOnCreate,
   needsTable,
@@ -140,6 +141,25 @@ describe('shouldReleaseClaim', () => {
     expect(shouldReleaseClaim(printedByA, { userId: 'b', role: 'cashier' })).toBe(false);
     expect(shouldReleaseClaim(printedByA, { userId: 'o', role: 'restaurant_owner' })).toBe(false);
     expect(shouldReleaseClaim(printedByA, { userId: 's', role: 'supervisor' })).toBe(false);
+  });
+});
+
+describe('holdsFromKitchen', () => {
+  it("keeps the till's \"Print bill & update\" off the kitchen", () => {
+    expect(holdsFromKitchen(false, 'cashier')).toBe(true);
+    expect(holdsFromKitchen(false, 'supervisor')).toBe(true);
+    expect(holdsFromKitchen(false, 'restaurant_owner')).toBe(true);
+  });
+
+  it('sends everything to the kitchen unless told otherwise', () => {
+    expect(holdsFromKitchen(undefined, 'cashier')).toBe(false);
+    expect(holdsFromKitchen(true, 'cashier')).toBe(false);
+  });
+
+  it("never holds back a waiter's or the kitchen's change", () => {
+    expect(holdsFromKitchen(false, 'waiter')).toBe(false);
+    expect(holdsFromKitchen(false, 'kitchen')).toBe(false);
+    expect(holdsFromKitchen(false, null)).toBe(false);
   });
 });
 

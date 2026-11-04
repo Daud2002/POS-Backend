@@ -51,6 +51,30 @@ export class UpdateExpenseCategoryDto {
   isActive?: boolean;
 }
 
+export class CreateExpenseSubcategoryDto {
+  @ApiProperty({ description: 'The expense category it sits under' })
+  @IsUUID()
+  categoryId: string;
+
+  @ApiProperty({ example: 'Ahmad' })
+  @IsString()
+  @MaxLength(255)
+  name: string;
+}
+
+export class UpdateExpenseSubcategoryDto {
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  name?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+}
+
 export class CreateExpenseDto {
   @ApiProperty({ example: 'October electricity bill' })
   @IsString()
@@ -66,6 +90,21 @@ export class CreateExpenseDto {
   @IsOptional()
   @IsUUID()
   categoryId?: string;
+
+  @ApiProperty({ required: false, description: "One of the category's subcategories" })
+  @IsOptional()
+  @IsUUID()
+  subcategoryId?: string;
+
+  @ApiProperty({
+    required: false,
+    example: 'Ahmad',
+    description: 'A subcategory by name, created under the category if it does not exist yet. Wins over subcategoryId.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  subcategoryName?: string;
 
   @ApiProperty({ example: '2026-08-24', description: 'Calendar day, YYYY-MM-DD. Defaults to today.' })
   @IsOptional()
@@ -100,6 +139,17 @@ export class UpdateExpenseDto {
   @IsOptional()
   @IsUUID()
   categoryId?: string | null;
+
+  @ApiProperty({ required: false, description: 'null clears it. Changing the category clears it too.' })
+  @IsOptional()
+  @IsUUID()
+  subcategoryId?: string | null;
+
+  @ApiProperty({ required: false, description: 'As on create: found or created under the category.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  subcategoryName?: string;
 
   @ApiProperty({ required: false })
   @IsOptional()

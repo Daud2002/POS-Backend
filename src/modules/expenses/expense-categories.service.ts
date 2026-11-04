@@ -4,6 +4,20 @@ import { Repository } from 'typeorm';
 import { Expense, ExpenseCategory } from '@/entities';
 import { toPage, type Page } from '@/common';
 import { CreateExpenseCategoryDto, UpdateExpenseCategoryDto } from './dto';
+import { ExpenseSubcategoriesService } from './expense-subcategories.service';
+
+/**
+ * Each category with its subcategories, A–Z. Retired subcategories are left
+ * out unless asked for, as retired categories are.
+ */
+function withSubcategories(categories: ExpenseCategory[], includeInactive: boolean): ExpenseCategory[] {
+  for (const category of categories) {
+    category.subcategories = (category.subcategories ?? [])
+      .filter((s) => includeInactive || s.isActive)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+  return categories;
+}
 
 @Injectable()
 export class ExpenseCategoriesService {
@@ -12,6 +26,7 @@ export class ExpenseCategoriesService {
     private categoriesRepository: Repository<ExpenseCategory>,
     @InjectRepository(Expense)
     private expensesRepository: Repository<Expense>,
+    private subcategoriesService: ExpenseSubcategoriesService,
   ) {}
 
   /**
@@ -52,7 +67,12 @@ export class ExpenseCategoriesService {
   async findAll(storeId: string, includeInactive = false): Promise<ExpenseCategory[]> {
     const where: any = { storeId };
     if (!includeInactive) where.isActive = true;
-    return this.categoriesRepository.find({ where, order: { name: 'ASC' } });
+    const categories = await this.categoriesRepository.find({
+      where,
+      relations: { subcategories: true },
+      order: { name: 'ASC' },
+    });
+    return withSubcategories(categories, includeInactive);
   }
 
   async findAllPaged(
@@ -66,11 +86,12 @@ export class ExpenseCategoriesService {
 
     const [items, total] = await this.categoriesRepository.findAndCount({
       where,
+      relations: { subcategories: true },
       order: { name: 'ASC' },
       skip,
       take,
     });
-    return toPage(items, total, skip, take);
+    return toPage(withSubcategories(items, includeInactive), total, skip, take);
   }
 
   async findOne(id: string, storeId: string): Promise<ExpenseCategory> {
@@ -103,6 +124,7 @@ export class ExpenseCategoriesService {
    */
   async remove(id: string, storeId: string): Promise<{ message: string }> {
     const category = await this.findOne(id, storeId);
+    await this.subcategoriesService.removeAllOf(id, storeId);
     await this.expensesRepository.update({ categoryId: id, storeId }, { categoryId: null });
     await this.categoriesRepository.remove(category);
     return { message: 'Expense category deleted' };

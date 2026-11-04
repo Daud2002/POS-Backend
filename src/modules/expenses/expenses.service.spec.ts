@@ -43,11 +43,15 @@ function setup(
   };
   const categoriesRepository = { findOne: jest.fn(async () => ({ id: 'cat-1' })) };
 
+  // No subcategory in these writes: resolve() says "unchanged".
+  const subcategoriesService = { resolve: jest.fn(async (): Promise<undefined> => undefined) };
+
   const service = new ExpensesService(
     expensesRepository as any,
     categoriesRepository as any,
     shiftsService as any,
     dataSource as any,
+    subcategoriesService as any,
   );
   // findOne joins the category; stub it so create/update return the saved row.
   (service as any).findOne = jest.fn(async (id: string) => saved.find((r) => r.id === id) ?? existing);

@@ -32,6 +32,14 @@ function Get-Pinned($name) {
   return $file
 }
 
+# $ErrorActionPreference does not cover native programs: a failed npm just
+# sets $LASTEXITCODE and the script carries on. Every npm call goes through
+# here so the first failure stops the build with its name on it.
+function Invoke-Checked([string]$what, [scriptblock]$command) {
+  & $command
+  if ($LASTEXITCODE -ne 0) { throw "$what failed (exit code $LASTEXITCODE)" }
+}
+
 function Expand-Into($zip, $target, $innerFolder) {
   $tmp = Join-Path $cache ([guid]::NewGuid())
   Expand-Archive -Path $zip -DestinationPath $tmp
@@ -54,21 +62,28 @@ Copy-Item (Get-Pinned 'vcredist') (Join-Path $stage 'vc_redist.x64.exe')
 
 Write-Host '==> Backend'
 Push-Location $backend
-npm ci
-npm run build
+Invoke-Checked 'Backend install' { npm ci --no-audit --no-fund }
+Invoke-Checked 'Backend build' { npm run build }
 Pop-Location
 $app = Join-Path $stage 'app'
 New-Item -ItemType Directory -Force -Path $app | Out-Null
 Copy-Item -Recurse (Join-Path $backend 'dist') (Join-Path $app 'dist')
 Copy-Item (Join-Path $backend 'package.json'), (Join-Path $backend 'package-lock.json') $app
 Push-Location $app
-npm ci --omit=dev --ignore-scripts
+Invoke-Checked 'Backend runtime packages' { npm ci --omit=dev --ignore-scripts --no-audit --no-fund }
 Pop-Location
 
 Write-Host '==> Web app (store build)'
 Push-Location $FrontendDir
-npm ci
-npm run build:store
+# POS-Frontend keeps no package-lock.json in git, only a bun.lockb from its
+# Lovable days that no longer lists every dependency. Without a lock to
+# follow, npm resolves from package.json, as Vercel does for the cloud copy.
+if (Test-Path 'package-lock.json') {
+  Invoke-Checked 'Frontend install' { npm ci --no-audit --no-fund }
+} else {
+  Invoke-Checked 'Frontend install' { npm install --no-audit --no-fund }
+}
+Invoke-Checked 'Frontend store build' { npm run build:store }
 Pop-Location
 Copy-Item -Recurse (Join-Path $FrontendDir 'dist-store') (Join-Path $stage 'web')
 
@@ -88,7 +103,9 @@ if ($env:SIGN_CERT_PFX_BASE64) {
   $pfx = Join-Path $cache 'sign.pfx'
   [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGN_CERT_PFX_BASE64))
   & signtool.exe sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f $pfx /p $env:SIGN_CERT_PASSWORD $exe
+  $signed = $LASTEXITCODE
   Remove-Item $pfx -Force
+  if ($signed -ne 0) { throw "Signing failed (exit code $signed)" }
 } else {
   Write-Warning 'Not signed: Windows SmartScreen will warn when it is run. Set SIGN_CERT_PFX_BASE64 to sign.'
 }

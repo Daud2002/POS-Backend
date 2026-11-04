@@ -311,9 +311,8 @@ export class Order {
    * discounted subtotal: `total = max(subtotal - discount, 0) + deliveryCharge`.
    *
    * Always 0 on anything that is not a delivery — the rules force it, so a
-   * report can sum this column without checking the type. It is collected
-   * cash but not product revenue, which is why the sales report subtracts it
-   * before computing margin.
+   * report can sum this column without checking the type. Revenue includes
+   * it (it is part of `total`); reports also sum it on its own line.
    *
    * `default: 0` is load-bearing — see `version` below.
    */

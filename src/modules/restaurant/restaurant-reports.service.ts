@@ -68,12 +68,11 @@ export class RestaurantReportsService {
       // these become string concatenations.
       const deliveryCharge = Number(order.deliveryCharge) || 0;
       /**
-       * Revenue is what was charged for the FOOD. The delivery charge sits on
-       * top of `total` and is collected cash, but it is not a sale of anything
-       * with a cost against it — counting it would flatter the margin on
-       * every delivery. It is reported on its own line instead.
+       * Revenue is what the customer paid, delivery charge included — the
+       * same money the shift totals count, so "By cashier" matches the
+       * drawer. The delivery share is also reported on its own line.
        */
-      const total = (Number(order.total) || 0) - deliveryCharge;
+      const total = Number(order.total) || 0;
       revenue += total;
       discountTotal += Number(order.discount) || 0;
       deliveryChargeTotal += deliveryCharge;
@@ -133,7 +132,7 @@ export class RestaurantReportsService {
       // Discounts are already reflected in `total`, so profit derives from it.
       profit: round2(revenue - cost),
       discountTotal: round2(discountTotal),
-      /** Collected on deliveries, on top of `revenue`. Not part of profit. */
+      /** Collected on deliveries. Already included in `revenue`. */
       deliveryChargeTotal: round2(deliveryChargeTotal),
       averageOrderValue: orders.length ? round2(revenue / orders.length) : 0,
       /**

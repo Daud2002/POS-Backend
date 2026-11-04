@@ -18,6 +18,7 @@ import { Repository } from 'typeorm';
 import { User } from '../entities';
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from './auth.service';
+import { isStoreServer } from '../config/deployment';
 
 /** Marks a link token so it can never be mistaken for an access token. */
 export const IMPERSONATION_LINK_TYPE = 'impersonation-link';
@@ -77,7 +78,9 @@ export class ImpersonationService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    if (!this.secret()) {
+    // A store server has no impersonation at all (its routes are blocked), so
+    // the missing secret is expected there and not worth a warning.
+    if (!this.secret() && !isStoreServer()) {
       this.logger.warn(
         `IMPERSONATION_SECRET is not set (or shorter than ${ImpersonationService.MIN_SECRET_LENGTH} characters); ` +
           '"Open as owner / employee" will answer 503 until it is',

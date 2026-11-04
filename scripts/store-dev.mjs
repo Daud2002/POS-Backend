@@ -1,15 +1,25 @@
-// Runs a cloud and a store server side by side on this machine, each on its
-// own throwaway embedded Postgres, with a seeded restaurant. Nothing here
-// reads .env (production): every setting is passed explicitly.
+// Try the store server on a laptop. Nothing here reads .env (production):
+// every setting is passed explicitly.
 //
-//   npm run store:dev            # start both and keep them running (Ctrl+C stops)
-//   npm run store:dev -- --smoke # run the whole pairing → order → sync loop, then exit
+//   npm run store:dev
+//       A practice cloud AND a store server, each on its own throwaway
+//       Postgres, with a seeded restaurant. Press c to cut the "internet"
+//       (stops the practice cloud) and c again to bring it back; q quits.
+//       Cloud:        http://localhost:3100/api
+//       Store server: https://localhost:8443  (setup: http://localhost:8088/setup)
+//       Logins:       owner@snack.test / owner123, waiter@snack.test / waiter123
 //
-// Cloud:        http://localhost:3100/api
-// Store server: https://localhost:8443 (setup: http://localhost:8080/setup)
-// Logins:       owner@snack.test / owner123, waiter@snack.test / waiter123
+//   npm run store:dev -- --cloud https://api.tapntrade.store/api
+//       Only the store server, linked to a REAL cloud. Its data and pairing
+//       are kept in ~/.tapntrade-store-laptop between runs (--reset wipes it).
+//       Pair it with a TEST store: activating a store moves its orders onto
+//       this laptop.
+//
+//   npm run store:dev -- --smoke
+//       The whole pairing → order → sync loop against a practice cloud, then exit.
 import { spawn } from 'node:child_process';
-import { readFileSync, rmSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
@@ -20,10 +30,16 @@ import { startEmbeddedPostgres } from './lib/embedded-pg.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const smoke = process.argv.includes('--smoke');
-const dataDir = path.join(os.tmpdir(), 'tapntrade-store-dev');
+const cloudFlag = process.argv.indexOf('--cloud');
+const realCloud = cloudFlag > -1 ? process.argv[cloudFlag + 1] : null;
+const dataDir = realCloud
+  ? path.join(os.homedir(), '.tapntrade-store-laptop')
+  : path.join(os.tmpdir(), 'tapntrade-store-dev');
 const CLOUD = 'http://localhost:3100/api';
 const STORE = 'https://localhost:8443/api';
-const STORE_HTTP = 'http://localhost:8080';
+// Not 8080: that is where POS-Frontend's `npm run dev` listens.
+const STORE_HTTP = 'http://localhost:8088';
+const WEB_DIST = path.join(root, '..', 'POS-Frontend', 'dist-store');
 const children = [];
 
 function backend(name, env) {
@@ -53,7 +69,8 @@ function backend(name, env) {
       .toString()
       .split('\n')
       .filter(Boolean)
-      .forEach((line) => (smoke ? null : console.log(`[${name}] ${line}`)));
+      .filter((line) => !smoke && /ERROR|WARN|Store server running|Copied the store|Sync failed|Application is running/.test(line))
+      .forEach((line) => console.log(`[${name}] ${line.replace(/^\[Nest\]\s+\d+\s+-\s+/, '')}`));
   child.stdout.on('data', prefix);
   child.stderr.on('data', (c) => process.stderr.write(`[${name}] ${c}`));
   children.push(child);
@@ -137,7 +154,87 @@ function check(condition, message) {
   console.log(`  ✓ ${message}`);
 }
 
+function lanIp() {
+  return (
+    Object.values(os.networkInterfaces())
+      .flat()
+      .find((n) => n && n.family === 'IPv4' && !n.internal && /^(192\.168|10\.|172\.(1[6-9]|2\d|3[01]))/.test(n.address))
+      ?.address ?? 'localhost'
+  );
+}
+
+function storeServer(env) {
+  return backend('store', {
+    DEPLOYMENT_MODE: 'store',
+    HTTPS_PORT: '8443',
+    HTTP_PORT: '8088',
+    TAPNTRADE_DATA_DIR: dataDir,
+    WEB_DIST_DIR: WEB_DIST,
+    ...env,
+  });
+}
+
+async function waitForSetupPage() {
+  // The store server writes its CA before listening; wait for it over HTTP first.
+  for (let i = 0; i < 120; i++) {
+    try {
+      if ((await fetch(`${STORE_HTTP}/setup`)).ok) return;
+    } catch {}
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error('store server did not start');
+}
+
+/** Single keys while running: q quits, and `extra` maps more keys to actions. */
+function onKeys(stopAll, extra = {}) {
+  if (!process.stdin.isTTY) return;
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  process.stdin.on('data', async (key) => {
+    const k = key.toString();
+    if (k === 'q' || k === '\u0003') {
+      await stopAll();
+      process.exit(0);
+    }
+    if (extra[k]) await extra[k]();
+  });
+}
+
+/** Only a store server, linked to a real cloud, with its data kept between runs. */
+async function runAgainstRealCloud() {
+  if (process.argv.includes('--reset')) rmSync(dataDir, { recursive: true, force: true });
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  const secretFile = path.join(dataDir, 'jwt-secret');
+  if (!existsSync(secretFile)) writeFileSync(secretFile, randomBytes(48).toString('base64url'), { mode: 0o600 });
+
+  const storePg = await startEmbeddedPostgres({ port: 54413, dir: path.join(dataDir, 'pgdata') });
+  const stopAll = async () => {
+    children.forEach((c) => c.kill('SIGTERM'));
+    await storePg.stop();
+  };
+  process.on('SIGINT', () => stopAll().then(() => process.exit(0)));
+
+  storeServer({
+    DATABASE_PORT: '54413',
+    JWT_SECRET: readFileSync(secretFile, 'utf8'),
+    CLOUD_API_URL: realCloud.replace(/\/+$/, ''),
+  });
+  await waitForSetupPage();
+  const ip = lanIp();
+  console.log(`
+Store server is running, linked to ${realCloud}
+
+  Setup page (pairing, certificate, QR):  ${STORE_HTTP}/setup
+  TapNtrade on this laptop:               https://localhost:8443
+  From a phone on the same Wi-Fi:         http://${ip}:8088/setup  then  https://${ip}:8443
+  ${existsSync(WEB_DIST) ? '' : '(web app not built yet: run `npm run build:store` in POS-Frontend, then restart)\n'}
+  Data and pairing are kept in ${dataDir}
+  Press q to stop.`);
+  onKeys(stopAll);
+}
+
 async function main() {
+  if (realCloud) return runAgainstRealCloud();
   rmSync(dataDir, { recursive: true, force: true });
   const [cloudPg, storePg] = await Promise.all([
     startEmbeddedPostgres({ port: 54411 }),
@@ -150,32 +247,42 @@ async function main() {
   process.on('SIGINT', () => stopAll().then(() => process.exit(0)));
 
   try {
-    backend('cloud', { DEPLOYMENT_MODE: 'cloud', PORT: '3100', DATABASE_PORT: '54411', JWT_SECRET: 'dev-cloud-secret' });
+    const startCloud = () =>
+      backend('cloud', { DEPLOYMENT_MODE: 'cloud', PORT: '3100', DATABASE_PORT: '54411', JWT_SECRET: 'dev-cloud-secret' });
+    let cloud = startCloud();
     await waitFor(CLOUD, 'cloud');
     const seed = await seedCloud(cloudPg.config);
 
-    backend('store', {
-      DEPLOYMENT_MODE: 'store',
-      HTTPS_PORT: '8443',
-      HTTP_PORT: '8080',
-      DATABASE_PORT: '54412',
-      JWT_SECRET: 'dev-store-secret',
-      CLOUD_API_URL: CLOUD,
-      TAPNTRADE_DATA_DIR: dataDir,
-      WEB_DIST_DIR: path.join(root, '..', 'POS-Frontend', 'dist-store'),
-    });
-    // The store server writes its CA before listening; wait for it over HTTP first.
-    for (let i = 0; i < 120; i++) {
-      try {
-        if ((await fetch(`${STORE_HTTP}/setup`)).ok) break;
-      } catch {}
-      await new Promise((r) => setTimeout(r, 500));
-    }
+    storeServer({ DATABASE_PORT: '54412', JWT_SECRET: 'dev-store-secret', CLOUD_API_URL: CLOUD });
+    await waitForSetupPage();
     const health = await waitFor(STORE, 'store server');
 
     if (!smoke) {
-      console.log(`\nCloud: ${CLOUD}\nStore server: ${STORE} · setup ${STORE_HTTP}/setup\nCA: ${path.join(dataDir, 'keys', 'ca.crt')}\n`);
-      console.log('Pair it: log in to the cloud as owner@snack.test, create a pairing code, enter it on the setup page.');
+      const ip = lanIp();
+      console.log(`
+Practice cloud and store server are running (fresh data every start).
+
+  1. Cloud web app:  in POS-Frontend run  VITE_API_URL=${CLOUD} npm run dev
+     open http://localhost:8080, sign in as owner@snack.test / owner123,
+     Settings → Store Server → Generate pairing code
+  2. Setup page:     ${STORE_HTTP}/setup  → type the code → Link
+  3. Back in the cloud web app: Activate
+  4. Store server:   https://localhost:8443  (waiter@snack.test / waiter123)
+     From a phone on the same Wi-Fi: http://${ip}:8088/setup, then https://${ip}:8443
+  ${existsSync(WEB_DIST) ? '' : '(web app not built yet: run `npm run build:store` in POS-Frontend, then restart)\n'}
+  Press c to cut the internet (stops the practice cloud), c again to restore it. q quits.`);
+      onKeys(stopAll, {
+        c: async () => {
+          if (cloud.exitCode === null && !cloud.killed) {
+            cloud.kill('SIGTERM');
+            console.log('\n✂️  Internet cut: the cloud is down. The store server keeps taking orders; they wait to sync.');
+          } else {
+            cloud = startCloud();
+            await waitFor(CLOUD, 'cloud');
+            console.log('\n🌐 Internet back: the store server catches up within about 10 seconds.');
+          }
+        },
+      });
       return;
     }
 

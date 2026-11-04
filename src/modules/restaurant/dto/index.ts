@@ -187,6 +187,15 @@ export class AddOrderItemsDto {
   @ValidateNested({ each: true })
   @Type(() => RestaurantOrderItemDto)
   items: RestaurantOrderItemDto[];
+
+  @ApiPropertyOptional({
+    default: true,
+    description:
+      "false = the cashier's \"Print bill & update\": the new lines are billed but never reach the kitchen. Honoured for cashier, supervisor and owner only; a waiter's round always goes to the kitchen.",
+  })
+  @IsOptional()
+  @IsBoolean()
+  sendToKitchen?: boolean;
 }
 
 export class RemoveOrderItemDto {
@@ -205,9 +214,9 @@ export class RemoveOrderItemDto {
 }
 
 /**
- * Taking items OFF a live order. The cashier's counterpart to AddOrderItemsDto:
- * the bill is reprinted afterwards, and the kitchen gets a cancellation ticket
- * for anything it had not yet handed over.
+ * Taking items OFF a live order — by a waiter at the table or a cashier at the
+ * till. The bill is reprinted afterwards, and the kitchen gets a cancellation
+ * ticket for anything it had not yet handed over.
  */
 export class RemoveOrderItemsDto {
   @ApiProperty({ type: [RemoveOrderItemDto] })
@@ -215,6 +224,15 @@ export class RemoveOrderItemsDto {
   @ValidateNested({ each: true })
   @Type(() => RemoveOrderItemDto)
   items: RemoveOrderItemDto[];
+
+  @ApiPropertyOptional({
+    default: true,
+    description:
+      'false = no cancellation ticket for the kitchen. Honoured for cashier, supervisor and owner only.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  sendToKitchen?: boolean;
 }
 
 /**
@@ -302,7 +320,7 @@ export class PaymentSplitDto {
 }
 
 /**
- * Taking the money. The bill must already have been printed, by this cashier.
+ * Taking the money. The bill must already have been printed, at any till.
  *
  * The discount fields are accepted for older clients that still settle in one
  * step; a client built for the print-then-pay flow omits them and the figure

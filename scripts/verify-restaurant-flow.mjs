@@ -525,12 +525,12 @@ check('removing the last kitchen line readies the order', onlyDrinks.body?.order
 const report = await call('GET', '/restaurant/reports/sales', undefined, OT);
 check('owner reads the sales report', report.status === 200);
 // Settled: 1650 (2 biryani + 1 karahi, 25% off) + 250 (1 biryani flat) + 0 (1 biryani free)
-//        + 450 (the delivery's food: 1 biryani, 10% off — its 150 charge is not revenue)
-check('report revenue matches settled orders', Number(report.body?.revenue) === 2350, String(report.body?.revenue));
+//        + 600 (the delivery: 1 biryani, 10% off = 450, plus its 150 charge — revenue includes it)
+check('report revenue matches settled orders', Number(report.body?.revenue) === 2500, String(report.body?.revenue));
 check('delivery charges are reported on their own line', Number(report.body?.deliveryChargeTotal) === 150, String(report.body?.deliveryChargeTotal));
 // Cost: (2x300 + 1x800) + 300 + 300 + 300 = 2300
 check('report cost uses snapshotted unitCost', Number(report.body?.cost) === 2300, String(report.body?.cost));
-check('profit = revenue - cost', Number(report.body?.profit) === 50, String(report.body?.profit));
+check('profit = revenue - cost', Number(report.body?.profit) === 200, String(report.body?.profit));
 check('report excludes drafts and live orders', report.body?.orderCount === 4, String(report.body?.orderCount));
 check('waiter cannot read reports', (await call('GET', '/restaurant/reports/sales', undefined, wAuth.accessToken)).status === 403);
 

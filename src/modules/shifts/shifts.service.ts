@@ -84,6 +84,12 @@ async function sumByMethod(
   };
 }
 
+/** The roles that work a drawer, and so must have one open to move money. */
+export const SHIFT_GATED_ROLES: ReadonlyArray<string> = ['cashier', 'supervisor'];
+
+export const OPEN_SHIFT_FIRST =
+  'Open your shift first — orders and bills at the till are counted against your drawer.';
+
 /** What settle()/create() must stamp onto an order. */
 export interface SettlementStamp {
   shiftId: string | null;
@@ -161,6 +167,26 @@ export class ShiftsService {
       settledById: userId,
       settledAt: new Date(),
     };
+  }
+
+  /**
+   * Refuses a cashier or supervisor who has no drawer open, on a tenant with
+   * shifts on. Everyone else passes: owners have no drawer of their own, and
+   * waiters and kitchen hands cannot open one at all.
+   *
+   * For the writes that change what a till will collect — punching an order,
+   * adding or striking lines, printing or cancelling a bill. Settling has its
+   * own, stricter check (stampSettlement) because it stamps the drawer.
+   */
+  async assertOpenShiftIfGated(
+    storeId: string,
+    actor: { userId: string; role?: string | null },
+    message = OPEN_SHIFT_FIRST,
+  ): Promise<void> {
+    if (!actor.role || !SHIFT_GATED_ROLES.includes(actor.role)) return;
+    if (!(await this.isEnforced(storeId))) return;
+    const shift = await this.findOpenShift(this.dataSource.manager, storeId, actor.userId);
+    if (!shift) throw new ConflictException(message);
   }
 
   /** Whether this tenant requires an open shift to take money. */

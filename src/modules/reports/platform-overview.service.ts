@@ -72,7 +72,7 @@ export interface PlatformOverview {
  * store's currency and the dashboard shows one card per currency. Which
  * orders count follows the same rule as every store report
  * (`platformRevenuePredicate`), decided per row from the store's account
- * type, and delivery charges stay outside revenue as they do there.
+ * type, and delivery charges count as revenue as they do there.
  *
  * Months are the CALLER's months: the admin's browser sends its IANA zone and
  * the timestamp columns (UTC wall-clock, no zone) are shifted before

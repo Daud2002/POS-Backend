@@ -290,17 +290,29 @@ export function canPrintBills(role?: string | null): boolean {
 }
 
 /**
- * Whether adding a round to a printed bill clears the "bill printed" marker.
+ * Whether changing the lines of a printed bill clears the "bill printed" marker.
  *
- * A waiter's (or the kitchen's) round makes the paper wrong and they cannot
- * reprint it, so the marker comes off and the order reads "ready to bill"
- * again for whoever bills it next. A cashier, supervisor or owner reprints as
- * part of the same edit, so their change keeps the marker and the till simply
- * flags the paper as stale.
+ * A waiter's (or the kitchen's) round or removal makes the paper wrong and
+ * they cannot reprint it, so the marker comes off and the order reads "ready
+ * to bill" again for whoever bills it next. A cashier, supervisor or owner
+ * reprints as part of the same edit, so their change keeps the marker and the
+ * till simply flags the paper as stale.
  */
 export function shouldReleaseClaim(order: BillClaimable, viewer: BillViewer): boolean {
   if (!order.billPrintedById) return false;
   return !canPrintBills(viewer.role);
+}
+
+/**
+ * Whether an edit stays off the kitchen's board and tickets — the till's
+ * "Print bill & update", as opposed to "Send to kitchen & print bill".
+ *
+ * Only the roles that print bills may hold an edit back: they hand the bill
+ * over themselves. A waiter's round is food somebody has to cook, so it always
+ * goes to the kitchen whatever the client sent.
+ */
+export function holdsFromKitchen(sendToKitchen: boolean | undefined, role?: string | null): boolean {
+  return sendToKitchen === false && canPrintBills(role);
 }
 
 export type BillPrintMode = 'draft' | 'cancelled' | 'live' | 'settled';

@@ -13,6 +13,7 @@ export { RestaurantTable } from './restaurant-table.entity';
 export { Expense, EXPENSE_PAYMENT_METHODS } from './expense.entity';
 export type { ExpensePaymentMethod } from './expense.entity';
 export { ExpenseCategory } from './expense-category.entity';
+export { ExpenseSubcategory } from './expense-subcategory.entity';
 export { CashierShift } from './cashier-shift.entity';
 export type { CashierShiftStatus } from './cashier-shift.entity';
 export type { TableStatus } from './restaurant-table.entity';

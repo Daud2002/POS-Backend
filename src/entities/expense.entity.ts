@@ -10,6 +10,7 @@ import {
 import { Store } from './store.entity';
 import { User } from './user.entity';
 import { ExpenseCategory } from './expense-category.entity';
+import { ExpenseSubcategory } from './expense-subcategory.entity';
 
 /** How the money left the till. Mirrors the order-side payment methods. */
 export type ExpensePaymentMethod = 'cash' | 'card' | 'bank' | 'other';
@@ -42,6 +43,13 @@ export class Expense {
    */
   @Column({ type: 'uuid', nullable: true })
   categoryId?: string | null;
+
+  /**
+   * Who or what within the category ("Petrol" → "Ahmad"). Always one of
+   * `categoryId`'s subcategories, or null; changing the category clears it.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  subcategoryId?: string | null;
 
   @Column({ type: 'varchar', length: 255 })
   title: string;
@@ -97,6 +105,10 @@ export class Expense {
   })
   @JoinColumn({ name: 'categoryId' })
   category?: ExpenseCategory | null;
+
+  @ManyToOne(() => ExpenseSubcategory, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'subcategoryId' })
+  subcategory?: ExpenseSubcategory | null;
 
   @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'createdById' })
