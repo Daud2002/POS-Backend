@@ -10,6 +10,7 @@ import {
 } from 'typeorm';
 import { Store } from './store.entity';
 import { Expense } from './expense.entity';
+import { ExpenseSubcategory } from './expense-subcategory.entity';
 
 /**
  * Expense buckets ("Rent", "Utilities", "Supplies"), owned by the tenant.
@@ -18,8 +19,9 @@ import { Expense } from './expense.entity';
  * by the POS grid and every menu picker. Sharing one table would put rent in
  * the dish list.
  *
- * Only the owner maintains these; staff granted the expenses module pick from
- * them but cannot add or remove them.
+ * Only an owner or supervisor maintains these; staff granted the expenses
+ * module pick from them but cannot add or remove them. Subcategories under a
+ * category are looser — see ExpenseSubcategory.
  */
 @Entity('expense_categories')
 export class ExpenseCategory {
@@ -55,4 +57,7 @@ export class ExpenseCategory {
 
   @OneToMany(() => Expense, (expense) => expense.category)
   expenses: Expense[];
+
+  @OneToMany(() => ExpenseSubcategory, (subcategory) => subcategory.category)
+  subcategories?: ExpenseSubcategory[];
 }

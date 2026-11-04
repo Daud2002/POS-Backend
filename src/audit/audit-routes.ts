@@ -508,6 +508,24 @@ const ROUTES: Record<string, AuditRoute> = {
     entityType: 'expense_category',
     summary: (ctx) => `Expense category ${str(ctx.params.id).slice(0, 8)} deleted`,
   },
+  'POST /expenses/subcategories': {
+    module: 'expenses',
+    action: 'expense_subcategory.created',
+    entityType: 'expense_subcategory',
+    summary: (ctx) => `Expense subcategory ${nameOf(ctx, 'created')} created`,
+  },
+  'PATCH /expenses/subcategories/:id': {
+    module: 'expenses',
+    action: 'expense_subcategory.updated',
+    entityType: 'expense_subcategory',
+    summary: (ctx) => `Expense subcategory ${nameOf(ctx, str(ctx.params.id).slice(0, 8))} updated${changedFields(ctx.body)}`,
+  },
+  'DELETE /expenses/subcategories/:id': {
+    module: 'expenses',
+    action: 'expense_subcategory.deleted',
+    entityType: 'expense_subcategory',
+    summary: (ctx) => `Expense subcategory ${str(ctx.params.id).slice(0, 8)} deleted`,
+  },
 
   // --- shifts ---------------------------------------------------------------
   'POST /shifts/open': {

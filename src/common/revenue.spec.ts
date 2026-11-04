@@ -26,7 +26,7 @@ describe('revenue SQL fragments', () => {
     expect(settledAtExpr('o')).toBe(`COALESCE("o"."settledAt", "o"."createdAt")`);
   });
 
-  it('keeps delivery charges out of revenue', () => {
-    expect(revenueAmountExpr('o')).toBe(`("o"."total" - COALESCE("o"."deliveryCharge", 0))`);
+  it('counts delivery charges as revenue', () => {
+    expect(revenueAmountExpr('o')).toBe(`"o"."total"`);
   });
 });

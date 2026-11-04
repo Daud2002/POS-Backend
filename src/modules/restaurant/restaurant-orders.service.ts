@@ -47,6 +47,7 @@ import {
   BillViewer,
   billPrintMode,
   computeTotals,
+  holdsFromKitchen,
   initialStatus,
   mayPrintOnCreate,
   needsTable,
@@ -387,6 +388,8 @@ export class RestaurantOrdersService {
     if (printNow && !mayPrintOnCreate(actor.role)) {
       throw new BadRequestException('Only a cashier can print the bill while punching an order');
     }
+    // A draft moves no money; anything the kitchen or the till acts on does.
+    if (!isDraft) await this.shiftsService.assertOpenShiftIfGated(storeId, actor);
 
     const now = new Date();
     const lines = await this.buildItems(storeId, dto.items, isDraft ? null : now);
@@ -595,6 +598,7 @@ export class RestaurantOrdersService {
     if (existing.orderStatus !== 'draft') {
       throw new ConflictException('This order has already been sent');
     }
+    await this.shiftsService.assertOpenShiftIfGated(storeId, actor);
 
     const targetTable = tableId ?? existing.tableId;
     if (needsTable(existing.orderType) && !targetTable) {
@@ -646,6 +650,10 @@ export class RestaurantOrdersService {
    * round for billing — but they never reach the kitchen: the ticket event
    * carries only the cookable lines, and a round made of nothing else raises
    * no ticket at all.
+   *
+   * `sendToKitchen: false` (the till's "Print bill & update") stamps every new
+   * line `skipKitchen`, so the whole round is treated like drinks: billed,
+   * never on the board, no ticket.
    */
   async addItems(id: string, storeId: string, dto: AddOrderItemsDto, viewer: OrderViewer) {
     const existing = await this.ordersRepository.findOne({ where: { id, storeId } });
@@ -656,9 +664,13 @@ export class RestaurantOrdersService {
     if (!dto.items?.length) {
       throw new BadRequestException('Add at least one item');
     }
+    await this.shiftsService.assertOpenShiftIfGated(storeId, viewer);
 
     const sentAt = new Date();
-    const lines = await this.buildItems(storeId, dto.items, sentAt);
+    const built = await this.buildItems(storeId, dto.items, sentAt);
+    const lines = holdsFromKitchen(dto.sendToKitchen, viewer.role)
+      ? built.map((l) => ({ ...l, skipKitchen: true }))
+      : built;
     const newKitchenLines = kitchenLines(lines);
 
     /**
@@ -731,14 +743,15 @@ export class RestaurantOrdersService {
   }
 
   /**
-   * Takes lines off a live order — the cashier striking a dish the customer
-   * changed their mind about, or one the kitchen ran out of.
+   * Takes lines off a live order — a waiter or cashier striking a dish the
+   * customer changed their mind about, or one the kitchen ran out of.
    *
-   * Only the cashier holding the bill (or an owner) may; a second till cannot
-   * shorten an order the first is collecting for. The kitchen hears about it
-   * only when it matters: lines it was still cooking raise a cancellation
-   * ticket, lines already handed over do not — the food is on the counter
-   * whatever the paper now says.
+   * Any waiter, cashier, supervisor or owner may, until the order is paid;
+   * the `items_removed` history row records who. A waiter's removal clears
+   * the "bill printed" marker, as a waiter's round does, so a cashier
+   * reprints. The kitchen hears about it only when it matters: lines it was
+   * still cooking raise a cancellation ticket, lines already handed over do
+   * not — and none at all when the till chose "Print bill & update".
    */
   async removeItems(id: string, storeId: string, dto: RemoveOrderItemsDto, viewer: OrderViewer) {
     const existing = await this.loadForBilling(id, storeId);
@@ -749,8 +762,11 @@ export class RestaurantOrdersService {
       throw new ConflictException('This order is no longer open');
     }
 
+    await this.shiftsService.assertOpenShiftIfGated(storeId, viewer);
+
     const plan = applyRemovals(existing.items ?? [], dto.items ?? []);
     const statusBefore = existing.orderStatus;
+    const releaseClaim = shouldReleaseClaim(existing, viewer);
     const now = new Date();
 
     // Dropping the only parcel line turns a dine-out back into a dine-in; the
@@ -777,7 +793,12 @@ export class RestaurantOrdersService {
           total: reduced.total,
         });
       }
-      await manager.update(Order, id, { ...totals, orderType, orderStatus });
+      await manager.update(Order, id, {
+        ...totals,
+        orderType,
+        orderStatus,
+        ...(releaseClaim ? { billPrintedById: null, billPrintedAt: null } : {}),
+      });
 
       await this.logEvent(manager, existing, 'items_removed', viewer, {
         lines: plan.removed.map((r) => snapshotLine(r.line, r.quantity)),
@@ -793,7 +814,8 @@ export class RestaurantOrdersService {
     const cancelledKitchenLines = plan.removed
       .filter((r) => !r.line.skipKitchen)
       .map((r) => ({ ...r.line, quantity: r.quantity }));
-    if (stillCooking && cancelledKitchenLines.length) {
+    const tellKitchen = !holdsFromKitchen(dto.sendToKitchen, viewer.role);
+    if (stillCooking && cancelledKitchenLines.length && tellKitchen) {
       this.realtime.emitToStore(storeId, RealtimeEvents.orderItemsRemoved, {
         order,
         removedItems: cancelledKitchenLines,
@@ -876,6 +898,9 @@ export class RestaurantOrdersService {
     if (mode === 'settled') {
       return this.reprintSettledBill(existing, viewer);
     }
+    // Fixes the discount and delivery charge the drawer will collect. A copy
+    // of a settled bill (above) moves nothing, so it needs no shift.
+    await this.shiftsService.assertOpenShiftIfGated(storeId, viewer);
 
     // Recomputed and clamped server-side — never trusted from the client.
     const sentDiscount = dto.discountType !== undefined || dto.discountValue !== undefined;
@@ -1043,6 +1068,7 @@ export class RestaurantOrdersService {
     if (existing.orderStatus === 'completed') {
       throw new ConflictException('A settled order cannot be cancelled');
     }
+    await this.shiftsService.assertOpenShiftIfGated(storeId, viewer);
 
     await this.dataSource.transaction(async (manager) => {
       await manager.update(Order, id, { orderStatus: 'cancelled', status: 'cancelled' });

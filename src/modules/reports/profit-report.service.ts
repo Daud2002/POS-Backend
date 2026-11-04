@@ -10,7 +10,7 @@ import { ExpensesService } from '../expenses/expenses.service';
 
 export interface ProfitPeriod {
   orderCount: number;
-  /** What was charged for the goods — delivery charges excluded. */
+  /** What the customers paid, delivery charges included. */
   revenue: number;
   /** Σ unitCost × quantity over the lines sold, from the cost snapshot. */
   cost: number;
@@ -118,8 +118,6 @@ export class ProfitReportService {
       const filter = from ? ` FILTER (WHERE ${ProfitReportService.SETTLED_AT} >= :${key})` : '';
       if (from) qb.setParameter(key, from);
       columns.push([`COUNT("o"."id")${filter}`, `${key}_count`]);
-      // Delivery charges are collected cash but not a sale of anything with a
-      // cost against it, so they sit outside revenue — as in the sales report.
       columns.push([`COALESCE(SUM(${revenueAmountExpr('o')})${filter}, 0)`, `${key}_revenue`]);
     }
     selectAggregates(qb, columns);

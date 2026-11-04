@@ -4,6 +4,8 @@ import { AddOrderSequenceDay1792768639894 } from './1792768639894-AddOrderSequen
 import { CustomerEmailPerStore1792768692431 } from './1792768692431-CustomerEmailPerStore';
 import { AddStoreServers1793300599225 } from './1793300599225-AddStoreServers';
 import { SyncCore1793302226260 } from './1793302226260-SyncCore';
+import { AddExpenseSubcategories1793768945652 } from './1793768945652-AddExpenseSubcategories';
+import { SyncExpenseSubcategories1793768953370 } from './1793768953370-SyncExpenseSubcategories';
 
 export const MIGRATIONS: Function[] = [
   Baseline1792768409500,
@@ -11,4 +13,6 @@ export const MIGRATIONS: Function[] = [
   CustomerEmailPerStore1792768692431,
   AddStoreServers1793300599225,
   SyncCore1793302226260,
+  AddExpenseSubcategories1793768945652,
+  SyncExpenseSubcategories1793768953370,
 ];

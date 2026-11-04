@@ -24,11 +24,14 @@ import {
 } from '@/common';
 import { ExpensesService, type ExpenseActor } from './expenses.service';
 import { ExpenseCategoriesService } from './expense-categories.service';
+import { ExpenseSubcategoriesService } from './expense-subcategories.service';
 import {
   CreateExpenseDto,
   UpdateExpenseDto,
   CreateExpenseCategoryDto,
   UpdateExpenseCategoryDto,
+  CreateExpenseSubcategoryDto,
+  UpdateExpenseSubcategoryDto,
 } from './dto';
 
 /**
@@ -50,7 +53,9 @@ function actorOf(user: { id: string; effectiveRole?: string | null }): ExpenseAc
  * (owner permissions are derived from the account type), and staff hold it
  * only once the owner ticks it on. Categories are the exception — they are
  * the shape of the ledger rather than entries in it, so only an owner or a
- * supervisor holding the module may change them.
+ * supervisor holding the module may change them. Subcategories ("Petrol" →
+ * "Ahmad") are added by whoever books the spend; only renaming, retiring and
+ * deleting them is kept to owners and supervisors.
  */
 @ApiTags('Expenses')
 @ApiBearerAuth()
@@ -60,6 +65,7 @@ export class ExpensesController {
   constructor(
     private expensesService: ExpensesService,
     private categoriesService: ExpenseCategoriesService,
+    private subcategoriesService: ExpenseSubcategoriesService,
     private tenantService: TenantService,
   ) {}
 
@@ -123,6 +129,40 @@ export class ExpensesController {
     return this.categoriesService.remove(id, storeId);
   }
 
+  // ----------------------------------------------------- subcategories
+
+  @Post('subcategories')
+  @RequirePermissions('expenses')
+  @ApiOperation({ summary: 'Add a subcategory under an expense category (returns the existing one if the name is taken)' })
+  async createSubcategory(@CurrentUser() user: any, @Body() dto: CreateExpenseSubcategoryDto) {
+    const storeId = await this.tenantService.requireStoreId(user);
+    return this.subcategoriesService.create(storeId, dto);
+  }
+
+  @Patch('subcategories/:id')
+  @Roles('store_owner', 'restaurant_owner', 'super_admin', 'supervisor')
+  @RequirePermissions('expenses')
+  @ApiOperation({ summary: 'Rename or retire an expense subcategory (owner or supervisor)' })
+  @ApiResponse({ status: 409, description: 'That name is already used under the same category' })
+  async updateSubcategory(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() dto: UpdateExpenseSubcategoryDto,
+  ) {
+    const storeId = await this.tenantService.requireStoreId(user);
+    return this.subcategoriesService.update(id, storeId, dto);
+  }
+
+  @Delete('subcategories/:id')
+  @Roles('store_owner', 'restaurant_owner', 'super_admin', 'supervisor')
+  @RequirePermissions('expenses')
+  @ApiOperation({ summary: 'Delete an expense subcategory (owner or supervisor)' })
+  @ApiResponse({ status: 200, description: 'Deleted; its expenses keep their category' })
+  async removeSubcategory(@CurrentUser() user: any, @Param('id') id: string) {
+    const storeId = await this.tenantService.requireStoreId(user);
+    return this.subcategoriesService.remove(id, storeId);
+  }
+
   // ----------------------------------------------------------- summary
 
   @Get('summary')
@@ -141,6 +181,26 @@ export class ExpensesController {
     return this.expensesService.summary(storeId, day);
   }
 
+  @Get('breakdown')
+  @RequirePermissions('expenses')
+  @ApiOperation({ summary: 'Spend per category and subcategory, over the same filters as the list' })
+  @ApiQuery({ name: 'from', required: false, description: 'Inclusive start day, YYYY-MM-DD' })
+  @ApiQuery({ name: 'to', required: false, description: 'Inclusive end day, YYYY-MM-DD' })
+  @ApiQuery({ name: 'categoryId', required: false, description: "Category id, or 'none'" })
+  @ApiQuery({ name: 'subcategoryId', required: false, description: "Subcategory id, or 'none'" })
+  @ApiQuery({ name: 'search', required: false })
+  async breakdown(
+    @CurrentUser() user: any,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('categoryId') categoryId?: string,
+    @Query('subcategoryId') subcategoryId?: string,
+    @Query('search') search?: string,
+  ) {
+    const storeId = await this.tenantService.requireStoreId(user);
+    return this.expensesService.breakdown(storeId, { from, to, categoryId, subcategoryId, search });
+  }
+
   // ---------------------------------------------------------- expenses
 
   @Get()
@@ -149,19 +209,21 @@ export class ExpensesController {
   @ApiQuery({ name: 'from', required: false, description: 'Inclusive start day, YYYY-MM-DD' })
   @ApiQuery({ name: 'to', required: false, description: 'Inclusive end day, YYYY-MM-DD' })
   @ApiQuery({ name: 'categoryId', required: false, description: "Category id, or 'none'" })
+  @ApiQuery({ name: 'subcategoryId', required: false, description: "Subcategory id, or 'none'" })
   @ApiQuery({ name: 'search', required: false })
   async list(
     @CurrentUser() user: any,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('categoryId') categoryId?: string,
+    @Query('subcategoryId') subcategoryId?: string,
     @Query('search') search?: string,
     @Query('skip') skip?: string,
     @Query('take') take?: string,
     @Query('withCount') withCount?: string,
   ) {
     const storeId = await this.tenantService.requireStoreId(user);
-    const filters = { from, to, categoryId, search };
+    const filters = { from, to, categoryId, subcategoryId, search };
 
     if (wantsCount(withCount)) {
       const paging = parsePaging(skip, take);

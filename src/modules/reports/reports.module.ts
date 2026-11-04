@@ -4,6 +4,7 @@ import { Employee, Order, OrderItem, Store } from '../../entities';
 import { ReportsController } from './reports.controller';
 import { ProfitReportService } from './profit-report.service';
 import { PlatformOverviewService } from './platform-overview.service';
+import { ItemSalesService } from './item-sales.service';
 import { ExpensesModule } from '../expenses/expenses.module';
 
 @Module({
@@ -13,7 +14,7 @@ import { ExpensesModule } from '../expenses/expenses.module';
     ExpensesModule,
   ],
   controllers: [ReportsController],
-  providers: [ProfitReportService, PlatformOverviewService],
+  providers: [ProfitReportService, PlatformOverviewService, ItemSalesService],
   exports: [ProfitReportService],
 })
 export class ReportsModule {}

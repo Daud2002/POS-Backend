@@ -40,10 +40,10 @@ export function settledAtExpr(alias: string): string {
 }
 
 /**
- * What the goods sold for. Delivery charges are collected cash but not a sale
- * of anything with a cost against it, so they sit outside revenue and are
- * reported on their own.
+ * What the customer paid for the order, delivery charge included. The owner
+ * reads revenue as the money taken, so it matches the shift totals; the
+ * delivery share is still reported on its own line where a screen needs it.
  */
 export function revenueAmountExpr(alias: string): string {
-  return `("${alias}"."total" - COALESCE("${alias}"."deliveryCharge", 0))`;
+  return `"${alias}"."total"`;
 }

@@ -134,6 +134,13 @@ export const SYNC_TABLES: SyncTable[] = [
     touch: STAMPS,
   },
   {
+    // After its category, before the expenses that point at it.
+    table: 'expense_subcategories',
+    store: { column: 'storeId' },
+    groups: { row: { columns: ['storeId', 'categoryId', 'name', 'isActive'], owner: 'both' } },
+    touch: STAMPS,
+  },
+  {
     table: 'categories',
     store: { column: 'storeId' },
     groups: {
@@ -311,6 +318,7 @@ export const SYNC_TABLES: SyncTable[] = [
         columns: [
           'storeId',
           'categoryId',
+          'subcategoryId',
           'title',
           'amount',
           'expenseDate',

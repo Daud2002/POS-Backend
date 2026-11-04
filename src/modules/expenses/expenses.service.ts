@@ -4,8 +4,9 @@ import { isStoreServer } from '../../config/deployment';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { Expense, ExpenseCategory, type ExpensePaymentMethod } from '@/entities';
 import { toPage, type Page } from '@/common';
-import { ShiftsService } from '../shifts/shifts.service';
+import { SHIFT_GATED_ROLES, ShiftsService } from '../shifts/shifts.service';
 import { CreateExpenseDto, UpdateExpenseDto } from './dto';
+import { ExpenseSubcategoriesService } from './expense-subcategories.service';
 
 /** Who is writing the ledger: the id for the audit column, the role for the shift rule. */
 export interface ExpenseActor {
@@ -13,11 +14,24 @@ export interface ExpenseActor {
   effectiveRole?: string | null;
 }
 
-/** The roles that work a drawer, and so must have one open to touch the ledger. */
-export const SHIFT_GATED_ROLES: ReadonlyArray<string> = ['cashier', 'supervisor'];
-
 export const OPEN_SHIFT_FOR_EXPENSES =
   'Open your shift before recording an expense — cash spend is counted against your drawer.';
+
+/** Spend per category, and per subcategory within it, over the filtered expenses. */
+export interface ExpenseBreakdownCategory {
+  /** Null for uncategorized spend. */
+  categoryId: string | null;
+  name: string;
+  total: number;
+  count: number;
+  subcategories: Array<{
+    /** Null for spend in the category with no subcategory. */
+    subcategoryId: string | null;
+    name: string | null;
+    total: number;
+    count: number;
+  }>;
+}
 
 export interface ExpenseSummary {
   /** The calendar day these figures were computed for, echoed back. */
@@ -37,6 +51,7 @@ export class ExpensesService {
     private categoriesRepository: Repository<ExpenseCategory>,
     private shiftsService: ShiftsService,
     private dataSource: DataSource,
+    private subcategoriesService: ExpenseSubcategoriesService,
   ) {}
 
   /** 'YYYY-MM-DD' for the server's local day, used when a client sends none. */
@@ -156,10 +171,21 @@ export class ExpensesService {
         shiftId = await this.resolveShiftId(manager, storeId, dto.paymentMethod, createdById);
       }
 
+      // A typed-in name files a new subcategory in the same transaction, so a
+      // failed save never leaves an orphan "Ahmad" behind.
+      const { subcategoryId, subcategoryName, ...fields } = dto;
+      const resolvedSubcategoryId = await this.subcategoriesService.resolve(
+        manager,
+        storeId,
+        dto.categoryId ?? null,
+        { subcategoryId, subcategoryName },
+      );
+
       // `paymentMethod` is validated against the same list by @IsIn, but the
       // DTO types it as a plain string so it does not import the entity's union.
       const expense = manager.create(Expense, {
-        ...dto,
+        ...fields,
+        subcategoryId: resolvedSubcategoryId ?? null,
         title: dto.title.trim(),
         storeId,
         createdById: createdById ?? null,
@@ -180,6 +206,7 @@ export class ExpensesService {
     const qb = this.expensesRepository
       .createQueryBuilder('expense')
       .leftJoinAndSelect('expense.category', 'category')
+      .leftJoinAndSelect('expense.subcategory', 'subcategory')
       .leftJoinAndSelect('expense.createdBy', 'createdBy')
       .where('expense.storeId = :storeId', { storeId });
 
@@ -195,13 +222,21 @@ export class ExpensesService {
         qb.andWhere('expense.categoryId = :categoryId', { categoryId: filters.categoryId });
       }
     }
+    if (filters.subcategoryId) {
+      if (filters.subcategoryId === 'none') {
+        qb.andWhere('expense.subcategoryId IS NULL');
+      } else {
+        qb.andWhere('expense.subcategoryId = :subcategoryId', { subcategoryId: filters.subcategoryId });
+      }
+    }
 
     const term = filters.search?.trim();
     if (term) {
       qb.andWhere(
         `("expense"."title" ILIKE :term
           OR COALESCE("expense"."notes", '') ILIKE :term
-          OR COALESCE("category"."name", '') ILIKE :term)`,
+          OR COALESCE("category"."name", '') ILIKE :term
+          OR COALESCE("subcategory"."name", '') ILIKE :term)`,
         { term: `%${term}%` },
       );
     }
@@ -248,7 +283,7 @@ export class ExpensesService {
   async findOne(id: string, storeId: string): Promise<Expense> {
     const expense = await this.expensesRepository.findOne({
       where: { id, storeId },
-      relations: ['category', 'createdBy'],
+      relations: ['category', 'subcategory', 'createdBy'],
     });
     if (!expense) throw new NotFoundException('Expense not found');
     return expense;
@@ -263,14 +298,33 @@ export class ExpensesService {
       await this.assertCategoryInStore(storeId, dto.categoryId);
     }
 
+    /**
+     * The subcategory has to sit under whatever category the expense ends up
+     * in. Moving to another category without naming a subcategory clears it:
+     * "Ahmad" under Petrol means nothing under Rent.
+     */
+    const { subcategoryId, subcategoryName, ...fields } = dto;
+    const categoryId = dto.categoryId !== undefined ? dto.categoryId : expense.categoryId;
+    let nextSubcategoryId = await this.subcategoriesService.resolve(
+      this.dataSource.manager,
+      storeId,
+      categoryId,
+      { subcategoryId, subcategoryName },
+    );
+    if (nextSubcategoryId === undefined && categoryId !== expense.categoryId) nextSubcategoryId = null;
+
     this.expensesRepository.merge(expense, {
-      ...dto,
+      ...fields,
+      ...(nextSubcategoryId !== undefined ? { subcategoryId: nextSubcategoryId } : {}),
       ...(dto.title !== undefined ? { title: dto.title.trim() } : {}),
       ...(dto.paymentMethod !== undefined
         ? { paymentMethod: dto.paymentMethod as ExpensePaymentMethod }
         : {}),
     } as Partial<Expense>);
 
+    // The loaded relations would otherwise win over the new ids on save.
+    delete (expense as Partial<Expense>).category;
+    delete (expense as Partial<Expense>).subcategory;
     await this.expensesRepository.save(expense);
     return this.findOne(id, storeId);
   }
@@ -286,6 +340,60 @@ export class ExpensesService {
   private async assertShiftIfGated(storeId: string, actor: ExpenseActor | undefined): Promise<void> {
     if (!(await this.isShiftGated(storeId, actor))) return;
     await this.requireOpenShift(this.dataSource.manager, storeId, actor as ExpenseActor);
+  }
+
+  /**
+   * Spend per category and subcategory over the same filters as the list, so
+   * the breakdown always adds up to the "Filtered total" beside it. Biggest
+   * first at both levels.
+   */
+  async breakdown(storeId: string, filters: ExpenseFilters = {}): Promise<ExpenseBreakdownCategory[]> {
+    const rows = await this.baseQuery(storeId, filters)
+      .select('"category"."id"', 'categoryId')
+      .addSelect('"category"."name"', 'categoryName')
+      .addSelect('"subcategory"."id"', 'subcategoryId')
+      .addSelect('"subcategory"."name"', 'subcategoryName')
+      .addSelect('COALESCE(SUM("expense"."amount"), 0)', 'total')
+      .addSelect('COUNT("expense"."id")', 'count')
+      .groupBy('"category"."id"')
+      .addGroupBy('"category"."name"')
+      .addGroupBy('"subcategory"."id"')
+      .addGroupBy('"subcategory"."name"')
+      .getRawMany<Record<string, string | null>>();
+
+    const byCategory = new Map<string, ExpenseBreakdownCategory>();
+    for (const row of rows) {
+      const key = row.categoryId ?? 'none';
+      const total = Number(row.total) || 0;
+      const count = Number(row.count) || 0;
+      const entry = byCategory.get(key) ?? {
+        categoryId: row.categoryId ?? null,
+        name: row.categoryName ?? 'Uncategorized',
+        total: 0,
+        count: 0,
+        subcategories: [],
+      };
+      entry.total += total;
+      entry.count += count;
+      entry.subcategories.push({
+        subcategoryId: row.subcategoryId ?? null,
+        name: row.subcategoryName ?? null,
+        total,
+        count,
+      });
+      byCategory.set(key, entry);
+    }
+
+    const round = (n: number) => Math.round(n * 100) / 100;
+    return [...byCategory.values()]
+      .map((c) => ({
+        ...c,
+        total: round(c.total),
+        subcategories: c.subcategories
+          .map((s) => ({ ...s, total: round(s.total) }))
+          .sort((a, b) => b.total - a.total),
+      }))
+      .sort((a, b) => b.total - a.total);
   }
 
   /**
@@ -381,5 +489,7 @@ export interface ExpenseFilters {
   to?: string;
   /** A category id, or the literal 'none' for uncategorized. */
   categoryId?: string;
+  /** A subcategory id, or the literal 'none' for spend with no subcategory. */
+  subcategoryId?: string;
   search?: string;
 }
