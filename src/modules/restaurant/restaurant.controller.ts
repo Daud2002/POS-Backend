@@ -6,6 +6,7 @@ import {
   Delete,
   Body,
   Param,
+  ParseUUIDPipe,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -28,8 +29,10 @@ import {
   AddOrderItemsDto,
   CreateRestaurantOrderDto,
   CreateTableDto,
+  CreditOrderDto,
   PrintBillDto,
   RemoveOrderItemsDto,
+  SettleCreditDto,
   SettleOrderDto,
   UpdateDraftOrderDto,
   UpdateOrderStatusDto,
@@ -317,6 +320,77 @@ export class RestaurantController {
   async cancel(@CurrentUser() user: any, @Param('id') id: string) {
     const store = await this.tenantService.requireRestaurantStore(user);
     return this.ordersService.cancel(id, store.id, viewerOf(user));
+  }
+
+  // ------------------------------------------------------- credit sales
+
+  /**
+   * The customer walks away owing: the order is completed and its table
+   * freed, but no money is taken and nothing reaches a drawer or revenue
+   * until somebody collects it. A customer is required. Anyone who works the
+   * till may do it; when shifts are on, a cashier or supervisor needs an
+   * open one.
+   */
+  @Post('orders/:id/credit')
+  @Roles('cashier', 'supervisor', 'restaurant_owner')
+  @ApiOperation({ summary: 'Put an unpaid order on credit for a customer' })
+  @ApiResponse({
+    status: 409,
+    description: 'Draft, already closed, or shifts are on and the cashier has none open',
+  })
+  async credit(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() dto: CreditOrderDto,
+  ) {
+    const store = await this.tenantService.requireRestaurantStore(user);
+    return this.ordersService.credit(id, store.id, dto, viewerOf(user));
+  }
+
+  /**
+   * A credit customer pays. The collector is recorded as the settler and the
+   * money goes on their open shift, so it counts for them, today.
+   *
+   * Cashiers and supervisors only — the owner sees the credit book but does
+   * not collect from it (product decision).
+   */
+  @Post('orders/:id/credit/settle')
+  @Roles('cashier', 'supervisor')
+  @ApiOperation({ summary: 'Mark a credit order paid' })
+  @ApiResponse({
+    status: 409,
+    description: 'Not a credit order, already paid, or shifts are on and the cashier has none open',
+  })
+  async settleCredit(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() dto: SettleCreditDto,
+  ) {
+    const store = await this.tenantService.requireRestaurantStore(user);
+    return this.ordersService.settleCredit(id, store.id, dto, viewerOf(user));
+  }
+
+  @Get('credit/customers')
+  @Roles('cashier', 'supervisor', 'restaurant_owner')
+  @ApiOperation({ summary: 'Customers with credit orders, and what each still owes' })
+  async creditCustomers(
+    @CurrentUser() user: any,
+    @Query('search') search?: string,
+    @Query('status') status?: string,
+  ) {
+    const store = await this.tenantService.requireRestaurantStore(user);
+    return this.ordersService.creditCustomers(store.id, { search, status });
+  }
+
+  @Get('credit/customers/:customerId/orders')
+  @Roles('cashier', 'supervisor', 'restaurant_owner')
+  @ApiOperation({ summary: "One customer's credit orders: unpaid first, then paid, newest first" })
+  async creditCustomerOrders(
+    @CurrentUser() user: any,
+    @Param('customerId', ParseUUIDPipe) customerId: string,
+  ) {
+    const store = await this.tenantService.requireRestaurantStore(user);
+    return this.ordersService.creditCustomerOrders(store.id, customerId);
   }
 
   // ------------------------------------------------------------ reports

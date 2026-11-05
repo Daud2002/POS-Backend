@@ -260,6 +260,8 @@ export const SYNC_TABLES: SyncTable[] = [
           'settledById',
           'settledAt',
           'shiftId',
+          'creditedAt',
+          'creditedById',
           'billPrintedById',
           'billPrintedAt',
           'riderName',

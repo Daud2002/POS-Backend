@@ -355,3 +355,73 @@ export class SettleOrderDto {
   @Type(() => PaymentSplitDto)
   split?: PaymentSplitDto;
 }
+
+/**
+ * Putting an order on credit: the customer walks away owing.
+ *
+ * Name a customer either way:
+ * - `customerId` — one already in the store's directory (the till found them
+ *   through /customers/suggest);
+ * - `customerName` + `customerPhone` — a new one, filed by phone (an existing
+ *   customer with that phone is reused). A cashier cannot create customers
+ *   through /customers, so this is how a first-time credit customer is added.
+ *
+ * The money fields follow printBill's "absent = keep, null = clear" and only
+ * apply when the bill has NOT been printed; a printed bill's figures win, as
+ * they do in settle.
+ */
+export class CreditOrderDto {
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
+  @IsUUID()
+  customerId?: string;
+
+  @ApiPropertyOptional({ example: 'Ahmed Khan' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  customerName?: string;
+
+  @ApiPropertyOptional({ example: '03001234567', description: 'Required when no customerId is sent.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  customerPhone?: string;
+
+  @ApiPropertyOptional({ enum: ['amount', 'percent'], nullable: true })
+  @ValidateIf((o) => o.discountType !== undefined && o.discountType !== null)
+  @IsIn(['amount', 'percent'])
+  discountType?: 'amount' | 'percent' | null;
+
+  @ApiPropertyOptional({ example: 250, nullable: true })
+  @ValidateIf((o) => o.discountValue !== undefined && o.discountValue !== null)
+  @IsNumber()
+  @Min(0)
+  discountValue?: number | null;
+
+  @ApiPropertyOptional({ example: 0, nullable: true })
+  @ValidateIf((o) => o.deliveryCharge !== undefined && o.deliveryCharge !== null)
+  @IsNumber()
+  @Min(0)
+  deliveryCharge?: number | null;
+}
+
+/** Collecting a credit order: how the customer paid. The amount is the order's total. */
+export class SettleCreditDto {
+  @ApiPropertyOptional({
+    enum: ['cash', 'card', 'online', 'partial'],
+    description: "'partial' = more than one method; send the amounts in `split`.",
+  })
+  @IsOptional()
+  @IsIn(['cash', 'card', 'online', 'partial'])
+  paymentMethod?: string;
+
+  @ApiPropertyOptional({
+    type: PaymentSplitDto,
+    description: 'Required with paymentMethod=partial. Must add up to the order total.',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PaymentSplitDto)
+  split?: PaymentSplitDto;
+}

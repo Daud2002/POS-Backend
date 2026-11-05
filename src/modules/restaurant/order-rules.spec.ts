@@ -3,9 +3,13 @@ import {
   applyRemovals,
   billPrintMode,
   canPrintBills,
+  collectRefusal,
+  compareCreditOrders,
   computeTotals,
+  creditRefusal,
   holdsFromKitchen,
   initialStatus,
+  isCreditOwing,
   mayPrintOnCreate,
   needsTable,
   resolveOrderType,
@@ -321,5 +325,71 @@ describe('applyRemovals', () => {
 
   it('refuses an empty request', () => {
     expect(() => applyRemovals(lines, [])).toThrow(BadRequestException);
+  });
+});
+
+describe('creditRefusal', () => {
+  it('lets any live order go on credit, printed bill or not', () => {
+    for (const orderStatus of ['requested', 'preparing', 'handed_over']) {
+      expect(creditRefusal({ orderStatus, status: 'unpaid' })).toBeNull();
+    }
+  });
+
+  it('refuses drafts, cancellations and anything already closed', () => {
+    expect(creditRefusal({ orderStatus: 'draft' })).toMatch(/kitchen/);
+    expect(creditRefusal({ orderStatus: 'cancelled' })).toMatch(/cancelled/);
+    expect(creditRefusal({ orderStatus: 'completed', status: 'paid' })).toMatch(/settled/);
+    expect(
+      creditRefusal({ orderStatus: 'completed', status: 'unpaid', creditedAt: new Date() }),
+    ).toMatch(/already on credit/);
+  });
+});
+
+describe('collectRefusal', () => {
+  const credited = new Date('2026-11-01T10:00:00Z');
+
+  it('collects an unpaid credit order', () => {
+    expect(collectRefusal({ orderStatus: 'completed', status: 'unpaid', creditedAt: credited })).toBeNull();
+  });
+
+  it('refuses an order that was never put on credit', () => {
+    expect(collectRefusal({ orderStatus: 'completed', status: 'unpaid' })).toMatch(/not a credit/);
+  });
+
+  it('refuses a credit order that is already paid', () => {
+    expect(collectRefusal({ orderStatus: 'completed', status: 'paid', creditedAt: credited })).toMatch(
+      /already been paid/,
+    );
+  });
+});
+
+describe('compareCreditOrders', () => {
+  const at = (iso: string) => new Date(iso);
+
+  it('puts every owed order first, then paid, each newest first', () => {
+    const orders = [
+      { id: 'paid-old', status: 'paid', creditedAt: at('2026-10-01T10:00:00Z') },
+      { id: 'owed-old', status: 'unpaid', creditedAt: at('2026-10-02T10:00:00Z') },
+      { id: 'paid-new', status: 'paid', creditedAt: at('2026-11-03T10:00:00Z') },
+      { id: 'owed-new', status: 'unpaid', creditedAt: at('2026-11-04T10:00:00Z') },
+    ];
+    expect([...orders].sort(compareCreditOrders).map((o) => o.id)).toEqual([
+      'owed-new',
+      'owed-old',
+      'paid-new',
+      'paid-old',
+    ]);
+  });
+
+  it('accepts ISO strings as well as dates', () => {
+    const a = { status: 'unpaid', creditedAt: '2026-11-04T10:00:00Z' };
+    const b = { status: 'unpaid', creditedAt: '2026-11-05T10:00:00Z' };
+    expect(compareCreditOrders(a, b)).toBeGreaterThan(0);
+  });
+
+  it('knows what is still owed', () => {
+    expect(isCreditOwing({ status: 'unpaid', creditedAt: at('2026-11-04T10:00:00Z') })).toBe(true);
+    expect(isCreditOwing({ status: 'paid', creditedAt: at('2026-11-04T10:00:00Z') })).toBe(false);
+    expect(isCreditOwing({ status: 'unpaid' })).toBe(false);
   });
 });

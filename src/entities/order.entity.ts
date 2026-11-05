@@ -88,6 +88,13 @@ export const LIVE_ORDER_STATUSES: RestaurantOrderStatus[] = [
   unique: true,
   where: `"orderStatus" IN ('requested', 'preparing', 'handed_over')`,
 })
+/**
+ * The Credit Sales list: a store's credit orders, grouped by customer. Partial
+ * so the index stays the size of the credit book, not of every order ever.
+ */
+@Index('IDX_orders_credit_customer', ['storeId', 'customerId'], {
+  where: `"creditedAt" IS NOT NULL`,
+})
 export class Order {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -181,6 +188,31 @@ export class Order {
   @Index()
   @Column('uuid', { nullable: true })
   shiftId?: string | null;
+
+  /**
+   * CREDIT SALE: the customer walked away owing. Set when a cashier puts the
+   * order on credit instead of taking the money.
+   *
+   * Such an order is `orderStatus = 'completed'` (service is over, the table
+   * is free, it leaves every live board) but `status = 'unpaid'`, with
+   * `settledAt` / `settledById` / `shiftId` all still NULL. Whoever later
+   * collects it stamps those exactly as settle() does — so the money lands in
+   * THEIR shift, on THEIR dashboard, on the day it was paid. Revenue excludes
+   * an unpaid credit order (see common/revenue.ts).
+   *
+   * Never cleared: a paid credit order keeps it, which is how the Credit
+   * Sales list still shows it under the customer, in the paid group.
+   */
+  @Column({ type: 'timestamp', nullable: true })
+  creditedAt?: Date | null;
+
+  /** Who put the order on credit. Not who collected it — that is `settledById`. */
+  @Column('uuid', { nullable: true })
+  creditedById?: string | null;
+
+  @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'creditedById' })
+  creditedBy?: User | null;
 
   /**
    * Bill printing, separated from payment.

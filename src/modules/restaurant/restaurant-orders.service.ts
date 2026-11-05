@@ -5,7 +5,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, In, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, IsNull, Not, Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
 import {
   Customer,
@@ -23,9 +23,11 @@ import {
 import {
   AddOrderItemsDto,
   CreateRestaurantOrderDto,
+  CreditOrderDto,
   PrintBillDto,
   RemoveOrderItemsDto,
   RestaurantOrderItemDto,
+  SettleCreditDto,
   SettleOrderDto,
   UpdateDraftOrderDto,
   UpdateOrderStatusDto,
@@ -46,9 +48,13 @@ import {
   applyRemovals,
   BillViewer,
   billPrintMode,
+  collectRefusal,
+  compareCreditOrders,
   computeTotals,
+  creditRefusal,
   holdsFromKitchen,
   initialStatus,
+  isCreditOwing,
   mayPrintOnCreate,
   needsTable,
   resolveOrderType,
@@ -186,6 +192,8 @@ export class RestaurantOrdersService {
       .addSelect(['settledBy.id', 'settledBy.name'])
       .leftJoin('order.billPrintedBy', 'billPrintedBy')
       .addSelect(['billPrintedBy.id', 'billPrintedBy.name'])
+      .leftJoin('order.creditedBy', 'creditedBy')
+      .addSelect(['creditedBy.id', 'creditedBy.name'])
       .where('order.storeId = :storeId', { storeId })
       // Excludes every general-mode order, which all carry 'none'.
       .andWhere("order.orderStatus <> 'none'")
@@ -343,6 +351,10 @@ export class RestaurantOrdersService {
       /** The bill has been printed and is waiting to be paid. */
       billPrinted: !!order.billPrintedAt,
       billPrintedByName: (order as any).billPrintedBy?.name ?? null,
+      /** A credit sale: who put it on credit. Null on every other order. */
+      creditedByName: (order as any).creditedBy?.name ?? null,
+      /** On credit and not paid yet — the customer still owes it. */
+      creditOwing: isCreditOwing(order),
       /** Times the bill was printed AGAIN after the first. What the owner's list shows. */
       reprintCount: Math.max((Number(order.billPrintCount) || 0) - 1, 0),
       /** How a partial payment was split; null for a single method. */
@@ -1081,6 +1093,242 @@ export class RestaurantOrdersService {
     this.realtime.emitToStore(storeId, RealtimeEvents.orderUpdated, order);
     if (existing.tableId) await this.emitTable(storeId, existing.tableId);
     return order;
+  }
+
+  // --------------------------------------------------------- credit sales
+
+  /**
+   * The customer leaves without paying: the order goes on CREDIT.
+   *
+   * Everything settle() does except take the money — the order is completed
+   * (off the till, off every live board), the table is freed and the stock
+   * consumed, because the food is gone. What it does NOT do is stamp a payer,
+   * a shift or a settle time: those are written by whoever collects it later
+   * (settleCredit), so the money lands in their drawer on the day it arrives.
+   * Revenue skips the order until then (common/revenue.ts).
+   *
+   * A customer is required, from the directory or filed here by phone.
+   * Unlike settle, a printed bill is not: the product decision is that an
+   * order can go on credit at any point before it is paid. When the bill WAS
+   * printed its figures are what is owed; otherwise the till's discount and
+   * delivery charge are applied as printBill() would.
+   */
+  async credit(id: string, storeId: string, dto: CreditOrderDto, viewer: OrderViewer) {
+    const existing = await this.loadForBilling(id, storeId);
+
+    const refusal = creditRefusal(existing);
+    if (refusal) throw new ConflictException(refusal);
+
+    const customerId = dto.customerId?.trim() || null;
+    if (!customerId && !normalizePhone(dto.customerPhone)) {
+      throw new BadRequestException(
+        'Choose a customer, or enter a new customer\'s name and phone number',
+      );
+    }
+
+    // Takes an order off the till, so it is till work like printing a bill.
+    await this.shiftsService.assertOpenShiftIfGated(storeId, viewer);
+
+    const printed = !!existing.billPrintedAt;
+    const sentDiscount =
+      !printed && (dto.discountType !== undefined || dto.discountValue !== undefined);
+    const totals = computeTotals({
+      lines: existing.items ?? [],
+      discountType: sentDiscount ? dto.discountType : existing.discountType,
+      discountValue: sentDiscount ? dto.discountValue : existing.discountValue,
+      deliveryCharge:
+        !printed && dto.deliveryCharge !== undefined ? dto.deliveryCharge : existing.deliveryCharge,
+      orderType: existing.orderType,
+    });
+
+    const consumed = await this.dataSource.transaction(async (manager) => {
+      const customer = customerId
+        ? await manager.findOne(Customer, { where: { id: customerId, storeId } })
+        : await this.customersService.findOrCreateFromOrder(manager, storeId, {
+            name: dto.customerName,
+            phone: dto.customerPhone,
+            address: existing.deliveryAddress,
+          });
+      if (!customer) throw new NotFoundException('Customer not found');
+
+      /**
+       * Conditional on the order still being live, so two tills pressing at
+       * once (or a till racing a settle) cannot both close it: the loser
+       * changes nothing and is told so.
+       */
+      const result = await manager.update(
+        Order,
+        { id, storeId, orderStatus: In(LIVE_ORDER_STATUSES) },
+        {
+          orderStatus: 'completed',
+          status: 'unpaid',
+          ...totals,
+          customerId: customer.id,
+          customerName: customer.name,
+          customerPhone: customer.phone || null,
+          creditedAt: new Date(),
+          creditedById: viewer.userId,
+        },
+      );
+      if (!result.affected) {
+        throw new ConflictException('This order was just closed at another till. Refresh and try again.');
+      }
+
+      if (existing.tableId) {
+        await this.tablesService.release(manager, existing.tableId, storeId);
+      }
+
+      // The food has gone whether or not it was paid for.
+      return this.inventoryService.consumeForOrder(
+        manager,
+        storeId,
+        id,
+        existing.items ?? [],
+        viewer.userId,
+      );
+    });
+
+    const order = await this.findOne(id, storeId);
+    this.realtime.emitToStore(storeId, RealtimeEvents.orderUpdated, order);
+    if (existing.tableId) await this.emitTable(storeId, existing.tableId);
+    this.inventoryService.emit(storeId, consumed);
+    return order;
+  }
+
+  /**
+   * A credit customer pays. Whoever collects is credited exactly as settle()
+   * credits a cashier: their id, the time, and their open shift are stamped
+   * on the order, so the money is in their drawer, on their dashboard, and in
+   * revenue on THIS day — not the day the order was served.
+   *
+   * The whole order is collected at once; what is owed is the total fixed
+   * when it went on credit. Only cashiers and supervisors reach this (the
+   * controller's roles) and, when the store runs shifts, only with an open one.
+   */
+  async settleCredit(id: string, storeId: string, dto: SettleCreditDto, viewer: OrderViewer) {
+    const existing = await this.loadForBilling(id, storeId);
+
+    const refusal = collectRefusal(existing);
+    if (refusal) throw new ConflictException(refusal);
+
+    const total = Number(existing.total) || 0;
+    const payment = resolvePayment(dto.paymentMethod, dto.split, total);
+    const enforceShift = await this.shiftsService.isEnforced(storeId);
+
+    await this.dataSource.transaction(async (manager) => {
+      // Shares the shift row lock with settle(), so a drawer closing at this
+      // instant waits for the payment instead of missing it.
+      const stamp = await this.shiftsService.stampSettlement(manager, storeId, viewer.userId, {
+        enforce: enforceShift,
+      });
+
+      // Conditional, so two tills collecting the same order pay it once.
+      const result = await manager.update(
+        Order,
+        { id, storeId, status: 'unpaid', creditedAt: Not(IsNull()) },
+        { status: 'paid', ...payment, ...stamp },
+      );
+      if (!result.affected) {
+        throw new ConflictException('This credit order has already been paid');
+      }
+
+      if (existing.customerId) {
+        await manager.increment(Customer, { id: existing.customerId }, 'totalSpent', total);
+      }
+    });
+
+    const order = await this.findOne(id, storeId);
+    this.realtime.emitToStore(storeId, RealtimeEvents.orderUpdated, order);
+    return order;
+  }
+
+  /**
+   * The Credit Sales list: one row per customer who has ever bought on
+   * credit, with what they still owe.
+   *
+   * Grouped in SQL, then filtered and sorted here — the credit book is a few
+   * hundred customers at most, and doing it in memory keeps the store-wide
+   * totals independent of the search box.
+   *
+   * Customers who owe come first, the most recent credit first; then the
+   * ones who have settled up, most recent first.
+   */
+  async creditCustomers(
+    storeId: string,
+    filters: { search?: string; status?: string } = {},
+  ) {
+    const rows: Array<Record<string, any>> = await this.ordersRepository
+      .createQueryBuilder('o')
+      .leftJoin(Customer, 'c', '"c"."id" = "o"."customerId"')
+      .select('"o"."customerId"', 'customerId')
+      .addSelect('MAX(COALESCE("c"."name", "o"."customerName"))', 'name')
+      .addSelect('MAX(COALESCE("c"."phone", "o"."customerPhone"))', 'phone')
+      .addSelect(
+        `COALESCE(SUM("o"."total") FILTER (WHERE "o"."status" = 'unpaid'), 0)`,
+        'outstanding',
+      )
+      .addSelect(`COUNT(*) FILTER (WHERE "o"."status" = 'unpaid')`, 'unpaidCount')
+      .addSelect(`COUNT(*) FILTER (WHERE "o"."status" = 'paid')`, 'paidCount')
+      .addSelect('MAX("o"."creditedAt")', 'lastCreditedAt')
+      .addSelect(
+        `MAX("o"."creditedAt") FILTER (WHERE "o"."status" = 'unpaid')`,
+        'lastOwedAt',
+      )
+      .where('"o"."storeId" = :storeId', { storeId })
+      .andWhere('"o"."creditedAt" IS NOT NULL')
+      .andWhere('"o"."customerId" IS NOT NULL')
+      .groupBy('"o"."customerId"')
+      .getRawMany();
+
+    const time = (v: unknown) => (v ? new Date(v as string).getTime() : 0);
+    const all = rows
+      .map((r) => ({
+        customerId: r.customerId as string,
+        name: (r.name as string | null) ?? 'Customer',
+        phone: (r.phone as string | null) ?? null,
+        outstanding: round2(Number(r.outstanding) || 0),
+        unpaidCount: Number(r.unpaidCount) || 0,
+        paidCount: Number(r.paidCount) || 0,
+        lastCreditedAt: r.lastCreditedAt ?? null,
+        lastOwedAt: r.lastOwedAt ?? null,
+      }))
+      .sort((a, b) => {
+        const owingA = a.unpaidCount > 0;
+        const owingB = b.unpaidCount > 0;
+        if (owingA !== owingB) return owingA ? -1 : 1;
+        return owingA
+          ? time(b.lastOwedAt) - time(a.lastOwedAt)
+          : time(b.lastCreditedAt) - time(a.lastCreditedAt);
+      });
+
+    const totals = {
+      outstanding: round2(all.reduce((sum, c) => sum + c.outstanding, 0)),
+      customersOwing: all.filter((c) => c.unpaidCount > 0).length,
+      unpaidCount: all.reduce((sum, c) => sum + c.unpaidCount, 0),
+    };
+
+    const term = filters.search?.trim().toLowerCase() ?? '';
+    const digits = normalizePhone(term);
+    const customers = all.filter((c) => {
+      if (filters.status === 'owing' && c.unpaidCount === 0) return false;
+      if (!term) return true;
+      return (
+        c.name.toLowerCase().includes(term) ||
+        (c.phone ?? '').toLowerCase().includes(term) ||
+        (!!digits && (normalizePhone(c.phone) || '').includes(digits))
+      );
+    });
+
+    return { customers, totals };
+  }
+
+  /** One customer's credit orders: owed first, then paid, each newest first. */
+  async creditCustomerOrders(storeId: string, customerId: string) {
+    const orders = await this.baseQuery(storeId)
+      .andWhere('order.customerId = :customerId', { customerId })
+      .andWhere('order.creditedAt IS NOT NULL')
+      .getMany();
+    return orders.map((o) => this.present(o)).sort(compareCreditOrders);
   }
 
   /**
