@@ -1,4 +1,10 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { Order, OrderItem, Product, Store, Employee, Customer } from '../../entities';
@@ -21,6 +27,23 @@ const ORDER_USER_SELECT = {
   createdBy: { id: true, name: true, email: true },
   settledBy: { id: true, name: true, email: true },
 } as const;
+
+/**
+ * The general POS may not take the money for a RESTAURANT order.
+ *
+ * A restaurant order is paid at the till (settle) or from Credit Sales
+ * (settleCredit), both of which complete the lifecycle, free the table and —
+ * when the store runs shifts — insist on an open drawer. Marking one paid
+ * here would skip all of that: an uncollected credit sale would vanish from
+ * the credit book with its money outside every shift.
+ */
+function assertGeneralOrderPayment(order: Pick<Order, 'orderStatus'>): void {
+  if (order.orderStatus && order.orderStatus !== 'none') {
+    throw new ConflictException(
+      'Restaurant orders are paid from the cashier screen or Credit Sales',
+    );
+  }
+}
 
 @Injectable()
 export class OrdersService {
@@ -279,6 +302,7 @@ export class OrdersService {
     // An update that flips an unpaid ticket to paid is a payment, and needs
     // the same attribution as marking it paid outright.
     const becomesPaid = updateOrderDto.status === 'paid' && order.status !== 'paid';
+    if (becomesPaid) assertGeneralOrderPayment(order);
     const stamp = becomesPaid ? await this.settlementStamp(storeId, userId) : {};
 
     const updated = this.ordersRepository.merge(order, { ...updateOrderDto, ...stamp } as any);
@@ -301,6 +325,7 @@ export class OrdersService {
     userId?: string,
   ): Promise<Order> {
     const existing = await this.findOne(id, storeId);
+    if (existing.status !== 'paid') assertGeneralOrderPayment(existing);
 
     const patch: Partial<Order> = { status: 'paid' };
     if (paymentMethod) patch.paymentMethod = paymentMethod as any;

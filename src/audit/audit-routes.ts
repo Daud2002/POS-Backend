@@ -304,6 +304,29 @@ const ROUTES: Record<string, AuditRoute> = {
     entityType: 'order',
     summary: (ctx) => `Order ${orderLabel(ctx)} cancelled`,
   },
+  'POST /restaurant/orders/:id/credit': {
+    module: 'orders',
+    action: 'order.credited',
+    entityType: 'order',
+    summary: (ctx) => {
+      const order = rec(ctx.response);
+      const body = rec(ctx.body);
+      const who = str(order.customerName ?? body.customerName, 'a customer');
+      return `Order ${orderLabel(ctx)} put on credit for ${who} (total ${money(order.total)})` + discountPhrase(body);
+    },
+  },
+  'POST /restaurant/orders/:id/credit/settle': {
+    module: 'orders',
+    action: 'order.credit_collected',
+    entityType: 'order',
+    summary: (ctx) => {
+      const body = rec(ctx.body);
+      const order = rec(ctx.response);
+      const method = str(order.paymentMethod ?? body.paymentMethod, 'cash');
+      const who = str(order.customerName, 'the customer');
+      return `Credit order ${orderLabel(ctx)} paid by ${who} (${method}, total ${money(order.total)})`;
+    },
+  },
 
   // --- restaurant tables ----------------------------------------------------
   'POST /restaurant/tables': {

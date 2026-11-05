@@ -12,10 +12,23 @@
  * 'completed'); drafts, live tickets and cancellations are not. A general
  * store's orders never move through that lifecycle — they carry `orderStatus`
  * 'none' and settle by payment status instead.
+ *
+ * A CREDIT SALE is 'completed' the moment it goes on credit, but it is not
+ * money until somebody collects it — then it is revenue on the day it was
+ * paid (`settledAt`). The exclusion is deliberately narrow (credit rows only)
+ * rather than "status = 'paid'": older restaurant rows that reached
+ * 'completed' without a payment status keep counting exactly as before.
  */
+export function restaurantRevenueCondition(alias: string): string {
+  return (
+    `("${alias}"."orderStatus" = 'completed'` +
+    ` AND ("${alias}"."creditedAt" IS NULL OR "${alias}"."status" = 'paid'))`
+  );
+}
+
 export function revenuePredicate(alias: string, accountType: string | null | undefined): string {
   return accountType === 'restaurant'
-    ? `"${alias}"."orderStatus" = 'completed'`
+    ? restaurantRevenueCondition(alias)
     : `"${alias}"."status" IN ('paid', 'completed')`;
 }
 
@@ -26,7 +39,7 @@ export function revenuePredicate(alias: string, accountType: string | null | und
  */
 export function platformRevenuePredicate(orderAlias: string, storeAlias: string): string {
   return (
-    `(("${storeAlias}"."accountType" = 'restaurant' AND "${orderAlias}"."orderStatus" = 'completed')` +
+    `(("${storeAlias}"."accountType" = 'restaurant' AND ${restaurantRevenueCondition(orderAlias)})` +
     ` OR ("${storeAlias}"."accountType" <> 'restaurant' AND "${orderAlias}"."status" IN ('paid', 'completed')))`
   );
 }

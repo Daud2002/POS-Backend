@@ -431,3 +431,57 @@ export function resolvePayment(
 
   return { paymentMethod: 'partial', paidCash: cash, paidCard: card, paidOnline: online };
 }
+
+// ------------------------------------------------------------ credit sales
+
+interface CreditCandidate {
+  orderStatus?: RestaurantOrderStatus | string | null;
+  status?: string | null;
+  creditedAt?: Date | string | null;
+}
+
+/**
+ * Why this order cannot go on credit right now, or null when it can.
+ *
+ * Credit takes the order off the till exactly as settle() does — it completes
+ * it and frees the table — only without the money. So it is refused where
+ * settle is (a draft, anything already closed), but NOT for want of a printed
+ * bill: the product decision is that an order can go on credit at any point
+ * before it is paid.
+ */
+export function creditRefusal(order: CreditCandidate): string | null {
+  if (order.orderStatus === 'draft') {
+    return 'Send this order to the kitchen before putting it on credit';
+  }
+  if (order.orderStatus === 'cancelled') return 'This order was cancelled';
+  if (order.orderStatus === 'completed') {
+    return order.creditedAt ? 'This order is already on credit' : 'This order is already settled';
+  }
+  return null;
+}
+
+/** Why this credit order cannot be collected, or null when it can. */
+export function collectRefusal(order: CreditCandidate): string | null {
+  if (!order.creditedAt) return 'This order is not a credit sale';
+  if (order.status === 'paid') return 'This credit order has already been paid';
+  if (order.status !== 'unpaid') return 'This credit order cannot be paid';
+  return null;
+}
+
+/** True while the customer still owes for it. */
+export function isCreditOwing(order: CreditCandidate): boolean {
+  return !!order.creditedAt && order.status === 'unpaid';
+}
+
+/**
+ * The order of a customer's credit orders on the Credit Sales list: every
+ * order still owed first, then the paid ones — each group newest first, by
+ * when it went on credit.
+ */
+export function compareCreditOrders(a: CreditCandidate, b: CreditCandidate): number {
+  const owingA = isCreditOwing(a);
+  const owingB = isCreditOwing(b);
+  if (owingA !== owingB) return owingA ? -1 : 1;
+  const at = (o: CreditCandidate) => (o.creditedAt ? new Date(o.creditedAt).getTime() : 0);
+  return at(b) - at(a);
+}

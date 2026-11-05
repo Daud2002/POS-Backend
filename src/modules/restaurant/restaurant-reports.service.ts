@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Order } from '../../entities';
 import { round2 } from '../../common/discount';
+import { revenuePredicate } from '../../common/revenue';
 
 /**
  * Sales and profit for a restaurant owner.
@@ -32,9 +33,11 @@ export class RestaurantReportsService {
       .leftJoin('order.settledBy', 'settledBy')
       .addSelect(['settledBy.id', 'settledBy.name'])
       .where('order.storeId = :storeId', { storeId })
-      // Only settled money counts. Drafts, live orders and cancellations are
-      // excluded — counting a draft as revenue is how dashboards start lying.
-      .andWhere("order.orderStatus = 'completed'");
+      // Only settled money counts. Drafts, live orders, cancellations and
+      // credit sales nobody has collected yet are excluded — counting a draft
+      // as revenue is how dashboards start lying. The shared rule, so this
+      // report can never disagree with the profit cards.
+      .andWhere(revenuePredicate('order', 'restaurant'));
 
     /**
      * Windowed on when the money was TAKEN, falling back to creation for rows
