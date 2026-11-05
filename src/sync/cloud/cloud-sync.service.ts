@@ -28,6 +28,7 @@ function scopeSql(t: SyncTable): string {
                      UNION SELECT "userId" FROM employee_details WHERE "storeId" = $1
                      UNION SELECT "createdById" FROM orders WHERE "storeId" = $1
                      UNION SELECT "settledById" FROM orders WHERE "storeId" = $1 AND "settledById" IS NOT NULL
+                     UNION SELECT "creditedById" FROM orders WHERE "storeId" = $1 AND "creditedById" IS NOT NULL
                      UNION SELECT "billPrintedById" FROM orders WHERE "storeId" = $1 AND "billPrintedById" IS NOT NULL
                      UNION SELECT "userId" FROM cashier_shifts WHERE "storeId" = $1
                      UNION SELECT "closedById" FROM cashier_shifts WHERE "storeId" = $1 AND "closedById" IS NOT NULL

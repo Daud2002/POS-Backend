@@ -67,7 +67,7 @@ describe('cloud ⇄ store server', () => {
       [order.id, seed.productId],
     );
     await sides.store.query(`UPDATE products SET stock = stock - 2 WHERE id = $1`, [seed.productId]);
-    await sides.sync(); // fails quietly: no internet
+    await sides.storeSync.syncNow(); // fails quietly: no internet
 
     expect((await sides.storeSync.status()).lastSyncError).toMatch(/No connection/);
     expect(await one('cloud', `SELECT count(*)::int AS n FROM orders`)).toEqual({ n: 0 });
@@ -143,6 +143,37 @@ describe('cloud ⇄ store server', () => {
     expect(cloud).toHaveLength(3);
     expect(new Set(cloud.map((c: { sortOrder: number }) => c.sortOrder)).size).toBe(3);
     expect(await sides.store.query(list)).toEqual(cloud);
+  });
+
+  it('carries expense subcategories and credit sales both ways', async () => {
+    // The owner sets up a subcategory from home; the shop books against it.
+    const [category] = await sides.cloud.query(
+      `INSERT INTO expense_categories ("storeId", name) VALUES ($1, 'Kitchen') RETURNING id`,
+      [seed.storeId],
+    );
+    const [sub] = await sides.cloud.query(
+      `INSERT INTO expense_subcategories ("storeId", "categoryId", name) VALUES ($1, $2, 'Gas') RETURNING id`,
+      [seed.storeId, category.id],
+    );
+    await sides.sync();
+    expect(await one('store', `SELECT name FROM expense_subcategories WHERE id = $1`, [sub.id])).toEqual({ name: 'Gas' });
+
+    await sides.store.query(
+      `INSERT INTO expenses ("storeId", "categoryId", "subcategoryId", title, amount, "expenseDate")
+       VALUES ($1, $2, $3, 'Cylinder', 3200, '2026-11-05')`,
+      [seed.storeId, category.id, sub.id],
+    );
+    // A sale put on the customer's tab at the till.
+    await sides.store.query(
+      `UPDATE orders SET "creditedAt" = now(), "creditedById" = $1 WHERE "orderNumber" = 'ORD-SHOP-1'`,
+      [seed.waiterId],
+    );
+    await sides.sync();
+
+    expect(await one('cloud', `SELECT title, "subcategoryId"::text AS sub FROM expenses`)).toEqual({ title: 'Cylinder', sub: sub.id });
+    expect(
+      await one('cloud', `SELECT "creditedById"::text AS by, "creditedAt" IS NOT NULL AS credited FROM orders WHERE "orderNumber" = 'ORD-SHOP-1'`),
+    ).toEqual({ by: seed.waiterId, credited: true });
   });
 
   it('stops being the writer after a failover', async () => {

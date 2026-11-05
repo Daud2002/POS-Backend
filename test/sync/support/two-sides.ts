@@ -46,10 +46,45 @@ export class TwoSides {
     await Promise.all([this.cloud?.destroy(), this.store?.destroy()]);
   }
 
-  /** Push and pull until neither side has anything left to send. */
-  async sync() {
-    await this.storeSync.syncNow();
-    await this.storeSync.syncNow();
+  /**
+   * Push and pull until neither side has anything left to send.
+   *
+   * Not a fixed number of cycles: the feed only hands out changes once every
+   * older transaction on the cluster has finished (the xmin fence), and other
+   * test files run migrations on the same cluster at the same time. A change
+   * can therefore wait a cycle or two; it is never lost, so wait for it.
+   */
+  async sync(timeoutMs = 15_000) {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      await this.storeSync.syncNow();
+      if (await this.settled()) return;
+      if (Date.now() > deadline) throw new Error('Sync did not settle');
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+
+  /** Every committed change on either side is past the other side's cursor. */
+  private async settled(): Promise<boolean> {
+    const s = await this.storeSync.state();
+    const after = (cursor: string) => `(xid, seq) > (split_part('${cursor}', '.', 1)::xid8, split_part('${cursor}', '.', 2)::bigint)`;
+    const count = async (db: DataSource, sql: string, params: unknown[]) => (await db.query(sql, params))[0].n as number;
+    const pending = await Promise.all([
+      count(this.store, `SELECT count(*)::int AS n FROM sync_meta WHERE origin = $1 AND ${after(s.push_after)}`, [s.server_id]),
+      count(this.store, `SELECT count(*)::int AS n FROM sync_counter_deltas WHERE origin = $1 AND ${after(s.push_delta_after)}`, [
+        s.server_id,
+      ]),
+      count(this.cloud, `SELECT count(*)::int AS n FROM sync_meta WHERE store_id = $1 AND origin <> $2 AND ${after(s.pull_after)}`, [
+        s.store_id,
+        s.server_id,
+      ]),
+      count(
+        this.cloud,
+        `SELECT count(*)::int AS n FROM sync_counter_deltas WHERE store_id = $1 AND origin <> $2 AND ${after(s.pull_delta_after)}`,
+        [s.store_id, s.server_id],
+      ),
+    ]);
+    return pending.every((n) => n === 0);
   }
 
   private async route(url: string, init: RequestInit): Promise<Response> {
