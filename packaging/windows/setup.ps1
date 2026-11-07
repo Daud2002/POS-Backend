@@ -33,10 +33,20 @@ function New-Secret([int]$bytes = 32) {
   [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($buffer)
   return [Convert]::ToBase64String($buffer).Replace('+', '-').Replace('/', '_').TrimEnd('=')
 }
+# $ErrorActionPreference does not cover native programs (initdb, pg_ctl,
+# psql, WinSW): a failure only sets $LASTEXITCODE. Every one goes through here.
+function Invoke-Native([string]$what, [scriptblock]$command) {
+  & $command | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw "$what failed (exit code $LASTEXITCODE)" }
+}
 
 foreach ($dir in @($DataDir, $configDir, $logs, $backups, (Join-Path $DataDir 'keys'))) {
   New-Item -ItemType Directory -Force -Path $dir | Out-Null
 }
+# The installer runs this hidden, so everything it prints goes to a log too.
+Start-Transcript -Path (Join-Path $logs 'setup.log') -Append | Out-Null
+try {
+
 # Only Administrators and SYSTEM may read the data folder: it holds the
 # database, the shop's certificate key and the server's cloud credential.
 icacls $DataDir /inheritance:r /grant:r "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" | Out-Null
@@ -45,11 +55,24 @@ icacls $DataDir /inheritance:r /grant:r "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-18:(OI
 $dbPassword = $null
 if (-not (Test-Path (Join-Path $pgData 'PG_VERSION'))) {
   Step 'Creating the local database'
+  # initdb drops administrator rights before it writes anything (PostgreSQL
+  # refuses to run with them), so the Administrators grant above no longer
+  # covers it. Give the folder to this user and to the database service
+  # account (NETWORK SERVICE) directly.
+  New-Item -ItemType Directory -Force -Path $pgData | Out-Null
+  $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+  icacls $pgData /grant "*${me}:(OI)(CI)F" "*S-1-5-20:(OI)(CI)F" | Out-Null
+
   $dbPassword = New-Secret 24
   $pwFile = Join-Path $env:TEMP "tnt-pw-$([guid]::NewGuid()).txt"
   Set-Content -Path $pwFile -Value $dbPassword -NoNewline -Encoding ascii
-  & "$pg\initdb.exe" -D $pgData -U postgres -E UTF8 --locale=C --auth=scram-sha-256 --pwfile=$pwFile | Out-Host
-  Remove-Item $pwFile -Force
+  try {
+    Invoke-Native 'Creating the database (initdb)' {
+      & "$pg\initdb.exe" -D $pgData -U postgres -E UTF8 --locale=C --auth=scram-sha-256 --pwfile=$pwFile
+    }
+  } finally {
+    Remove-Item $pwFile -Force -ErrorAction SilentlyContinue
+  }
   Add-Content -Path (Join-Path $pgData 'postgresql.conf') -Value @"
 
 # TapNtrade store server
@@ -62,20 +85,33 @@ log_timezone = 'UTC'
 
 if (-not (Get-Service TapNtradeDB -ErrorAction SilentlyContinue)) {
   Step 'Registering the database service'
-  & "$pg\pg_ctl.exe" register -N TapNtradeDB -D $pgData -S auto | Out-Host
+  Invoke-Native 'Registering the database service' { & "$pg\pg_ctl.exe" register -N TapNtradeDB -D $pgData -S auto }
   # The service runs as NETWORK SERVICE, which needs the data folder.
   icacls $pgData /grant "*S-1-5-20:(OI)(CI)F" /T | Out-Null
 }
 Start-Service TapNtradeDB
-Start-Sleep -Seconds 3
+$ready = $false
+for ($i = 0; $i -lt 30 -and -not $ready; $i++) {
+  if (Test-Path "$pg\pg_isready.exe") {
+    & "$pg\pg_isready.exe" -h 127.0.0.1 -p $pgPort | Out-Null
+    $ready = ($LASTEXITCODE -eq 0)
+  } else {
+    $ready = (Test-NetConnection 127.0.0.1 -Port $pgPort -WarningAction SilentlyContinue).TcpTestSucceeded
+  }
+  if (-not $ready) { Start-Sleep -Seconds 1 }
+}
+if (-not $ready) { throw "The database service started but is not accepting connections on port $pgPort." }
 
 # ----------------------------------------------------------------- config
 if (-not (Test-Path $envFile)) {
   if (-not $dbPassword) { throw "server.env is missing but the database already exists. Restore server.env from a backup." }
   Step 'Writing server.env'
   $env:PGPASSWORD = $dbPassword
-  & "$pg\psql.exe" -h 127.0.0.1 -p $pgPort -U postgres -c "CREATE DATABASE tapntrade" | Out-Host
-  Remove-Item Env:\PGPASSWORD
+  try {
+    Invoke-Native 'Creating the tapntrade database' { & "$pg\psql.exe" -h 127.0.0.1 -p $pgPort -U postgres -c "CREATE DATABASE tapntrade" }
+  } finally {
+    Remove-Item Env:\PGPASSWORD -ErrorAction SilentlyContinue
+  }
   @"
 DEPLOYMENT_MODE=store
 DATABASE_HOST=127.0.0.1
@@ -97,10 +133,10 @@ NODE_ENV=production
 $winsw = Join-Path $InstallDir 'winsw\TapNtradeServer.exe'
 if (-not (Get-Service TapNtradeServer -ErrorAction SilentlyContinue)) {
   Step 'Registering the TapNtrade server service'
-  & $winsw install | Out-Host
+  Invoke-Native 'Registering the server service' { & $winsw install }
 }
 Step 'Starting the TapNtrade server'
-& $winsw restart | Out-Host
+Invoke-Native 'Starting the server service' { & $winsw restart }
 
 # The server writes the shop's certificate authority on its first start.
 $caFile = Join-Path $DataDir 'keys\ca.crt'
@@ -109,7 +145,7 @@ if (Test-Path $caFile) {
   Step 'Trusting the shop certificate on this PC'
   Import-Certificate -FilePath $caFile -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
 } else {
-  Write-Warning "The server did not start in time; see $logs. Re-run setup after fixing it."
+  throw "The TapNtrade server did not start within a minute. Its logs are in $logs."
 }
 
 # --------------------------------------------------------------- network
@@ -143,5 +179,13 @@ $triggers = @((New-ScheduledTaskTrigger -Daily -At 5:30am), (New-ScheduledTaskTr
 Register-ScheduledTask -TaskName 'TapNtrade backup' -Action $action -Trigger $triggers -User 'SYSTEM' `
   -RunLevel Highest -Force | Out-Null
 
-Step 'Done'
-Start-Process 'http://localhost/setup'
+Step 'Done. Open http://localhost/setup to link this PC to your store.'
+
+} catch {
+  Write-Host "SETUP FAILED: $($_.Exception.Message)" -ForegroundColor Red
+  Write-Host "Details are in $(Join-Path $logs 'setup.log')"
+  Stop-Transcript | Out-Null
+  exit 1
+}
+Stop-Transcript | Out-Null
+exit 0
