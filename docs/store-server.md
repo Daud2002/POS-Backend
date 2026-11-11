@@ -134,9 +134,12 @@ On the day:
 
 ## Not done yet
 
-- **QZ Tray silent printing on the store server.** Today it falls back to QZ's "Allow" prompt.
-  Each store server will need its own signing certificate, issued by the cloud through a QZ
-  intermediate CA. Test first that QZ accepts the chain.
+- **QZ Tray silent printing on the store server, automatically.** A store server has no signing
+  key until it is given one, so it falls back to QZ's "Allow" prompt. For now each shop's
+  certificate is issued by hand from the root and installed on the shop PC: see
+  `qz-tray/README.md`, "Store servers". Still to do: issue it at pairing, by the cloud, through
+  a QZ intermediate CA (test first that QZ accepts the chain). `packaging/windows/install-qz.ps1`
+  has never been run on Windows.
 - **Automatic updates.** For now an update means running the newer installer. It stops the
   server, takes a backup, keeps all data, and migrates on start.
 - **Live refresh of the owner's cloud dashboard when shop orders arrive by sync.** It updates on

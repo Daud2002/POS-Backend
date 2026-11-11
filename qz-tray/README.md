@@ -43,6 +43,53 @@ variables unset the API still runs and printing still works, with the prompt.
 That is the whole station setup. Nothing is tied to the browser, the user
 account or the printer, so a reinstalled browser keeps printing silently.
 
+## Store servers (the offline site)
+
+A shop's store server signs print requests itself, so it needs a signing key
+on the shop PC. Each shop gets its own key and certificate, issued from the
+same root. Stations keep the one `override.crt`, which covers the cloud site
+and the offline site alike, and a lost shop PC exposes that shop's key only,
+not the one in the cloud's `QZ_SIGNING_KEY`.
+
+Issue one (needs `root.key` in this folder):
+
+```sh
+./issue-store-cert.sh snack-fuel "Snack Fuel"
+```
+
+That writes `stores/<slug>/`, which is git-ignored because it holds the
+private key. Take three files from it to the shop: `qz-signing.env`,
+`override.crt` and `install-qz.ps1`.
+
+On the shop PC that runs the store server, open PowerShell as Administrator in
+that folder and run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-qz.ps1
+```
+
+It adds the two `QZ_SIGNING_` lines to
+`C:\ProgramData\TapNtrade\config\server.env` (keeping the old file as
+`server.env.before-qz`), restarts the TapNtrade server, and copies
+`override.crt` into the QZ Tray folder. Then quit QZ Tray from its tray icon
+and open it again.
+
+The same by hand:
+
+1. Paste the two lines of `qz-signing.env` at the end of
+   `C:\ProgramData\TapNtrade\config\server.env`, then restart the
+   **TapNtrade Server** service. Its log in `C:\ProgramData\TapNtrade\logs`
+   should say `QZ Tray request signing enabled`.
+2. Copy `override.crt` to `C:\Program Files\QZ Tray\override.crt` and
+   restart QZ Tray.
+
+Any other PC in the shop that prints through QZ Tray needs only step 2. The
+script can be run there too: it skips the server part when there is no store
+server on the PC.
+
+Treat `qz-signing.env` like a password: delete it from the USB stick or
+download folder once it is installed.
+
 ## If the prompt still appears
 
 - **The dialog names the certificate as untrusted.** `override.crt` is not
