@@ -59,6 +59,7 @@ import {
   needsTable,
   resolveOrderType,
   resolvePayment,
+  resolveTip,
   shouldReleaseClaim,
   statusAfterRemoval,
   statusAfterRound,
@@ -1016,7 +1017,13 @@ export class RestaurantOrdersService {
 
     // Tenants with shifts switched on require an open drawer; the rest simply
     // record who settled, so turning the flag on later has history to show.
-    const enforceShift = await this.shiftsService.isEnforced(storeId);
+    // The same store read says which payment methods take tips.
+    const policy = await this.shiftsService.settlementPolicy(storeId);
+    const enforceShift = policy.enforceShift;
+
+    // The tip sits beside the bill, never in it: `totals` and `payment` below
+    // are untouched by it, which is what keeps revenue tip-free.
+    const tip = resolveTip(dto, payment, totals.total, policy.tips);
 
     const consumed = await this.dataSource.transaction(async (manager) => {
       /**
@@ -1029,13 +1036,25 @@ export class RestaurantOrdersService {
         enforce: enforceShift,
       });
 
-      await manager.update(Order, id, {
-        orderStatus: 'completed',
-        status: 'paid',
-        ...payment,
-        ...totals,
-        ...stamp,
-      });
+      // Conditional, as settleCredit's is: the status checks above ran before
+      // this transaction, so two tills pressing "Mark as paid" together both
+      // got past them. Only the first write lands; the second would otherwise
+      // overwrite the first cashier's tip and shift, and take the stock twice.
+      const result = await manager.update(
+        Order,
+        { id, storeId, orderStatus: In(LIVE_ORDER_STATUSES) },
+        {
+          orderStatus: 'completed',
+          status: 'paid',
+          ...payment,
+          ...tip,
+          ...totals,
+          ...stamp,
+        },
+      );
+      if (!result.affected) {
+        throw new ConflictException('This order is already settled');
+      }
 
       // The customer's running total, for the directory. An atomic increment
       // rather than read-modify-write: two tills can settle for the same
@@ -1213,7 +1232,11 @@ export class RestaurantOrdersService {
 
     const total = Number(existing.total) || 0;
     const payment = resolvePayment(dto.paymentMethod, dto.split, total);
-    const enforceShift = await this.shiftsService.isEnforced(storeId);
+    const policy = await this.shiftsService.settlementPolicy(storeId);
+    const enforceShift = policy.enforceShift;
+    // A tip left when the debt is paid belongs to whoever collects it, in
+    // their shift — same rule, and same place beside the bill, as settle().
+    const tip = resolveTip(dto, payment, total, policy.tips);
 
     await this.dataSource.transaction(async (manager) => {
       // Shares the shift row lock with settle(), so a drawer closing at this
@@ -1226,7 +1249,7 @@ export class RestaurantOrdersService {
       const result = await manager.update(
         Order,
         { id, storeId, status: 'unpaid', creditedAt: Not(IsNull()) },
-        { status: 'paid', ...payment, ...stamp },
+        { status: 'paid', ...payment, ...tip, ...stamp },
       );
       if (!result.affected) {
         throw new ConflictException('This credit order has already been paid');

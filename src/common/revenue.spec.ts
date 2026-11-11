@@ -41,4 +41,17 @@ describe('revenue SQL fragments', () => {
   it('counts delivery charges as revenue', () => {
     expect(revenueAmountExpr('o')).toBe(`"o"."total"`);
   });
+
+  it('never counts a tip as revenue', () => {
+    // Tips live in their own columns (orders.tipAmount / tipMethod). No
+    // revenue fragment may reach for them: revenue is the bill, `total`.
+    const fragments = [
+      revenueAmountExpr('o'),
+      revenuePredicate('o', 'restaurant'),
+      revenuePredicate('o', 'general'),
+      platformRevenuePredicate('o', 's'),
+      settledAtExpr('o'),
+    ];
+    for (const fragment of fragments) expect(fragment).not.toMatch(/tip/i);
+  });
 });

@@ -108,6 +108,16 @@ export class AuthService {
     let subscriptionExpiresAt: string | null = null;
     let storedPermissions: string[] | null = null;
 
+    // The owner's tip switches. The till reads them off the profile to decide
+    // whether to ask "how much did you receive" for a payment method.
+    const tipFlagsOf = (store?: Store | null) => ({
+      tipsCashEnabled: !!store?.tipsCashEnabled,
+      tipsCardEnabled: !!store?.tipsCardEnabled,
+      tipsOnlineEnabled: !!store?.tipsOnlineEnabled,
+      tipsPaidFromCash: !!store?.tipsPaidFromCash,
+    });
+    let tipFlags = tipFlagsOf(null);
+
     if (user.role === 'store_owner') {
       const store = await this.storesRepository.findOne({ where: { userId: user.id } });
       storeId = store?.id;
@@ -117,6 +127,7 @@ export class AuthService {
       accountType = store?.accountType;
       logoUrl = store?.logoUrl;
       shiftsEnabled = store?.shiftsEnabled;
+      tipFlags = tipFlagsOf(store);
       subscriptionExpiresAt = store?.subscriptionExpiresAt ?? null;
     } else if (user.role === 'employee' || user.role === 'cashier') {
       const employee = await this.employeesRepository.findOne({ where: { userId: user.id } });
@@ -132,6 +143,7 @@ export class AuthService {
         accountType = store?.accountType;
         logoUrl = store?.logoUrl;
         shiftsEnabled = store?.shiftsEnabled;
+        tipFlags = tipFlagsOf(store);
         subscriptionExpiresAt = store?.subscriptionExpiresAt ?? null;
       }
     }
@@ -153,6 +165,7 @@ export class AuthService {
       storeName,
       logoUrl: logoUrl ?? null,
       shiftsEnabled: shiftsEnabled ?? false,
+      ...tipFlags,
       /**
        * The day the store is paid through ('YYYY-MM-DD'), or null when the
        * platform admin has not recorded a payment. The dashboards turn this

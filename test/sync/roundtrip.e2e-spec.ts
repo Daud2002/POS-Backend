@@ -176,6 +176,50 @@ describe('cloud ⇄ store server', () => {
     ).toEqual({ by: seed.waiterId, credited: true });
   });
 
+  it('carries the tip switches down and recorded tips up', async () => {
+    // The owner turns tips on from home.
+    await sides.cloud.query(
+      `UPDATE stores SET "tipsCashEnabled" = true, "tipsCardEnabled" = true, "tipsPaidFromCash" = true WHERE id = $1`,
+      [seed.storeId],
+    );
+    await sides.sync();
+    expect(
+      await one(
+        'store',
+        `SELECT "tipsCashEnabled" AS cash, "tipsCardEnabled" AS card, "tipsOnlineEnabled" AS online,
+                "tipsPaidFromCash" AS "fromCash" FROM stores`,
+      ),
+    ).toEqual({ cash: true, card: true, online: false, fromCash: true });
+
+    // The till takes a tip with a payment, and closes the drawer it landed in.
+    await sides.store.query(
+      `UPDATE orders SET "tipAmount" = 150, "tipMethod" = 'card' WHERE "orderNumber" = 'ORD-SHOP-1'`,
+    );
+    const breakdown = [{ orderType: 'dine_in', method: 'card', amount: 150 }];
+    await sides.store.query(
+      `INSERT INTO cashier_shifts ("storeId", "userId", status, "openedAt", "openingFloat", "closedAt",
+         "cashTips", "cardTips", "onlineTips", "tipsFromDrawer", "tipBreakdown", "expectedCash")
+       VALUES ($1, $2, 'closed', now(), 1000, now(), 0, 150, 0, 150, $3::jsonb, 850)`,
+      [seed.storeId, seed.waiterId, JSON.stringify(breakdown)],
+    );
+    await sides.sync();
+
+    expect(
+      await one(
+        'cloud',
+        `SELECT "tipAmount"::float AS tip, "tipMethod" AS method, total::float AS total
+           FROM orders WHERE "orderNumber" = 'ORD-SHOP-1'`,
+      ),
+    ).toEqual({ tip: 150, method: 'card', total: 900 });
+    expect(
+      await one(
+        'cloud',
+        `SELECT "cardTips"::float AS card, "tipsFromDrawer"::float AS "fromDrawer",
+                "expectedCash"::float AS expected, "tipBreakdown" AS breakdown FROM cashier_shifts`,
+      ),
+    ).toEqual({ card: 150, fromDrawer: 150, expected: 850, breakdown });
+  });
+
   it('stops being the writer after a failover', async () => {
     await sides.servers.failover(seed.storeId, serverId);
     await sides.sync();

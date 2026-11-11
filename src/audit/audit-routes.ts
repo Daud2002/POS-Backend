@@ -129,6 +129,17 @@ function deliveryPhrase(source: Record<string, any>): string {
   return charge !== null && charge > 0 ? `, delivery charge ${money(charge)}` : '';
 }
 
+/**
+ * The tip recorded with a payment, read from the saved order rather than the
+ * request: the server may have refused or defaulted what the till sent.
+ */
+function tipPhrase(order: Record<string, any>): string {
+  const tip = num(order.tipAmount);
+  if (tip === null || tip <= 0) return '';
+  const method = str(order.tipMethod);
+  return `, tip ${money(tip)}${method ? ` by ${method}` : ''}`;
+}
+
 function tablePhrase(ctx: AuditContext): string {
   const order = rec(ctx.response);
   const tableName = str(rec(order.table).name);
@@ -295,7 +306,10 @@ const ROUTES: Record<string, AuditRoute> = {
       const body = rec(ctx.body);
       const order = rec(ctx.response);
       const method = str(order.paymentMethod ?? body.paymentMethod, 'cash');
-      return `Order ${orderLabel(ctx)} settled (${method}, total ${money(order.total)})` + discountPhrase(body);
+      return (
+        `Order ${orderLabel(ctx)} settled (${method}, total ${money(order.total)}${tipPhrase(order)})` +
+        discountPhrase(body)
+      );
     },
   },
   'POST /restaurant/orders/:id/cancel': {
@@ -324,7 +338,7 @@ const ROUTES: Record<string, AuditRoute> = {
       const order = rec(ctx.response);
       const method = str(order.paymentMethod ?? body.paymentMethod, 'cash');
       const who = str(order.customerName, 'the customer');
-      return `Credit order ${orderLabel(ctx)} paid by ${who} (${method}, total ${money(order.total)})`;
+      return `Credit order ${orderLabel(ctx)} paid by ${who} (${method}, total ${money(order.total)}${tipPhrase(order)})`;
     },
   },
 

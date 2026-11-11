@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
   Min,
   ValidateIf,
@@ -320,13 +321,52 @@ export class PaymentSplitDto {
 }
 
 /**
+ * A tip left on top of the bill, on either way of taking money.
+ *
+ * The till works out the tip (what it received minus the bill) and sends it
+ * explicitly; the split, if any, still adds up to the bill alone. Stores that
+ * do not record tips never send these, and an absent tip is always accepted.
+ */
+export class TipFieldsDto {
+  @ApiPropertyOptional({
+    example: 150,
+    description: 'Tip on top of the bill. Never part of the total, the split, or revenue.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  // The column is decimal(10,2); anything larger would surface as a 500.
+  @Max(99999999.99)
+  tipAmount?: number;
+
+  @ApiPropertyOptional({
+    enum: ['cash', 'card', 'online'],
+    description:
+      'How the tip was paid. Defaults to the payment method when that is cash, card or online; required on a split.',
+  })
+  @IsOptional()
+  @IsIn(['cash', 'card', 'online'])
+  tipMethod?: 'cash' | 'card' | 'online';
+
+  @ApiPropertyOptional({
+    example: 1850,
+    description:
+      'The bill the cashier was shown. When sent and it is not the total being charged, the payment is refused (409) rather than recording a wrong tip.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  expectedTotal?: number;
+}
+
+/**
  * Taking the money. The bill must already have been printed, at any till.
  *
  * The discount fields are accepted for older clients that still settle in one
  * step; a client built for the print-then-pay flow omits them and the figure
  * fixed at print time is charged.
  */
-export class SettleOrderDto {
+export class SettleOrderDto extends TipFieldsDto {
   @ApiPropertyOptional({ enum: ['amount', 'percent'] })
   @IsOptional()
   @IsIn(['amount', 'percent'])
@@ -407,7 +447,7 @@ export class CreditOrderDto {
 }
 
 /** Collecting a credit order: how the customer paid. The amount is the order's total. */
-export class SettleCreditDto {
+export class SettleCreditDto extends TipFieldsDto {
   @ApiPropertyOptional({
     enum: ['cash', 'card', 'online', 'partial'],
     description: "'partial' = more than one method; send the amounts in `split`.",

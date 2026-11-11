@@ -121,6 +121,36 @@ export class Store {
   shiftsEnabled: boolean;
 
   /**
+   * Tip recording, switched on per payment method.
+   *
+   * Some restaurants pool tips and share them out at day end; others only
+   * care about card tips, or about none. With a method's flag on, the till
+   * asks how much was received when a bill is paid that way, and whatever is
+   * above the bill is stored as a tip (`Order.tipAmount`) — never as revenue.
+   * All three off is the flow as it was before tips existed.
+   *
+   * Restaurant tenants only, like `shiftsEnabled`.
+   */
+  @Column({ type: 'boolean', default: false })
+  tipsCashEnabled: boolean;
+
+  @Column({ type: 'boolean', default: false })
+  tipsCardEnabled: boolean;
+
+  @Column({ type: 'boolean', default: false })
+  tipsOnlineEnabled: boolean;
+
+  /**
+   * Whether card and online tips are paid to staff out of the cash drawer.
+   *
+   * ON: the cashier takes them from the drawer, so they come off the cash to
+   * hand over. OFF: they stay with the card/online money and the handover is
+   * untouched. Cash tips are kept out of the handover either way.
+   */
+  @Column({ type: 'boolean', default: false })
+  tipsPaidFromCash: boolean;
+
+  /**
    * Server-relative path to the tenant's logo, e.g. '/uploads/logo/<id>-<ts>.png'.
    *
    * Stored relative, never absolute: the API's public origin differs between
