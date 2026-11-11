@@ -8,6 +8,8 @@ import { AddExpenseSubcategories1793768945652 } from './1793768945652-AddExpense
 import { SyncExpenseSubcategories1793768953370 } from './1793768953370-SyncExpenseSubcategories';
 import { AddOrderCredit1793894512649 } from './1793894512649-AddOrderCredit';
 import { SyncOrderCredit1793894520010 } from './1793894520010-SyncOrderCredit';
+import { AddTips1794377571594 } from './1794377571594-AddTips';
+import { SyncTips1794377577399 } from './1794377577399-SyncTips';
 
 export const MIGRATIONS: Function[] = [
   Baseline1792768409500,
@@ -19,4 +21,6 @@ export const MIGRATIONS: Function[] = [
   SyncExpenseSubcategories1793768953370,
   AddOrderCredit1793894512649,
   SyncOrderCredit1793894520010,
+  AddTips1794377571594,
+  SyncTips1794377577399,
 ];

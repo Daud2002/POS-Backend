@@ -20,8 +20,18 @@
  *   stores.orderSequence -> 0 (next order prints as #1),
  *   restaurant_tables    -> free, no current order.
  * KEPT untouched:
- *   the store row, users, employee_details, refresh_tokens, categories,
- *   products, restaurant_tables, expense_categories.
+ *   the store row and its settings (shifts, tip switches), users,
+ *   employee_details, refresh_tokens, categories, products, restaurant_tables,
+ *   expense_categories, expense_subcategories, audit_logs, store_servers,
+ *   subscription_payments.
+ *
+ * Credit sales and tips need no step of their own: both live on the order and
+ * shift rows, so they go with them.
+ *
+ * REFUSED for a store that runs from its own in-shop server (operationMode
+ * 'server'): its orders are written on the shop PC and only copied here, so
+ * clearing this copy would not make the shop fresh — and the sync guard
+ * rejects the deletes anyway. Clear it on the store server instead.
  *
  * Customers: rows filed under this store, plus legacy rows with a NULL
  * storeId that are only reachable through this store's orders. A customer
@@ -244,7 +254,9 @@ async function main() {
 
   try {
     const store = await dataSource.query(
-      'SELECT id, name, "accountType" FROM stores WHERE id = $1',
+      // to_jsonb so the query also runs on a database that predates store servers.
+      `SELECT s.id, s.name, s."accountType", to_jsonb(s)->>'operationMode' AS "operationMode"
+         FROM stores s WHERE s.id = $1`,
       [STORE_ID],
     );
     if (!store.length) {
@@ -252,6 +264,13 @@ async function main() {
     }
     if (store[0].accountType !== 'restaurant') {
       throw new Error(`Store ${store[0].name} is not a restaurant account`);
+    }
+    if (store[0].operationMode === 'server') {
+      throw new Error(
+        `${store[0].name} runs from its in-shop store server, so its orders live on the shop PC ` +
+          'and this database only holds a copy. Clearing the copy would not make the shop fresh, ' +
+          'and the sync guard refuses the deletes. Clear it on the store server instead.',
+      );
     }
 
     const keeping = ONLY_EXPENSES

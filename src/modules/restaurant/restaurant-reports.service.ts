@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Order } from '../../entities';
 import { round2 } from '../../common/discount';
 import { revenuePredicate } from '../../common/revenue';
+import { TipGrid, tipTotal } from '../../common/tips';
 
 /**
  * Sales and profit for a restaurant owner.
@@ -65,8 +66,15 @@ export class RestaurantReportsService {
     /** Who COLLECTED the money, as opposed to who took the order. */
     const byCashier = new Map<string, { name: string; orders: number; revenue: number }>();
     const byType: Record<string, { orders: number; revenue: number }> = {};
+    /**
+     * Tips left on these same orders. Collected on their own and never added
+     * to `revenue`: a tip is the staff's money, not the restaurant's sales.
+     */
+    const tips = new TipGrid();
 
     for (const order of orders) {
+      tips.add(order.orderType, order.tipMethod, order.tipAmount);
+
       // TypeORM returns Postgres decimals as strings; Number() everywhere or
       // these become string concatenations.
       const deliveryCharge = Number(order.deliveryCharge) || 0;
@@ -128,9 +136,16 @@ export class RestaurantReportsService {
       }
     }
 
+    const tipsBreakdown = tips.toCells();
+
     return {
       orderCount: orders.length,
+      // Bills only — `order.total` never holds a tip.
       revenue: round2(revenue),
+      /** Tips on these orders. NOT part of `revenue`, `profit` or any figure below. */
+      tipTotal: tipTotal(tipsBreakdown),
+      /** The same tips by order type and method (dine-out counted as dine-in). */
+      tipsBreakdown,
       cost: round2(cost),
       // Discounts are already reflected in `total`, so profit derives from it.
       profit: round2(revenue - cost),

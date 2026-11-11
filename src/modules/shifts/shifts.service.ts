@@ -11,10 +11,27 @@ import { CashierShift, Order, Store } from '../../entities';
 import { round2 } from '../../common/discount';
 import { resolvePermissions } from '../../common/permissions';
 import { toPage, type Page } from '../../common/pagination';
+import {
+  TIP_METHODS,
+  TIP_ORDER_TYPES,
+  TipGrid,
+  tipCellsFrom,
+  tipPolicyOf,
+  tipTotal,
+  tipsByMethod,
+  type TipCell,
+  type TipPolicy,
+} from '../../common/tips';
 import { RealtimeGateway, RealtimeEvents } from '../../realtime/realtime.gateway';
 import { CloseShiftDto, CollectShiftDto, ListShiftsQueryDto } from './dto';
+import { drawerMaths, tipsDueFromDrawer } from './shift-rules';
 
-/** Money taken during a shift, split the way an owner counts it. */
+/**
+ * Money taken during a shift, split the way an owner counts it.
+ *
+ * The `*Sales` figures are bills only. Tips sit beside them and are never
+ * added in — `totalReceived` is the one figure that holds both.
+ */
 export interface ShiftTotals {
   cashSales: number;
   cardSales: number;
@@ -23,7 +40,35 @@ export interface ShiftTotals {
   totalSales: number;
   orderCount: number;
   cashPaidOut: number;
+  /** Tips by the method they arrived by. */
+  cashTips: number;
+  cardTips: number;
+  onlineTips: number;
+  tipTotal: number;
+  /** The same tips by order type and method — the "Tips" dropdown. */
+  tipsBreakdown: TipCell[];
+  /** totalSales + tipTotal: everything the cashier took. */
+  totalReceived: number;
+  /** cashSales + cashTips. */
+  cashReceived: number;
+  /** What the drawer holds before tips are taken out. */
+  cashInDrawer: number;
+  /** Card/online tips the store pays out of this drawer; 0 when it does not. */
+  tipsFromDrawer: number;
+  /** Card/online tips the drawer could not cover. Almost always 0. */
+  tipsOwed: number;
+  /** The cash to hand over, tips already out. */
   expectedCash: number;
+}
+
+/** The bill-and-tip figures of a set of paid orders, before any drawer maths. */
+interface MethodSums {
+  cash: number;
+  card: number;
+  online: number;
+  other: number;
+  count: number;
+  tips: TipCell[];
 }
 
 /**
@@ -50,18 +95,30 @@ export interface ShiftTotals {
  * POST /shifts/open (row inserted, then the response 500ed) — which is how a
  * cashier came to see "shift not open" and "you already have an open shift"
  * at the same time.
+ *
+ * TIPS ride on the same query, one sum per order type × method cell (nine),
+ * so the header poll costs nothing extra. They are read from `tipAmount`
+ * alone and never touch the sales buckets above: `total` and `paid*` are the
+ * bill, which is what keeps every sales figure tip-free. Dine-out counts as
+ * dine-in; the dine-in cell takes everything that is not takeaway or
+ * delivery so the cells always add up to the tips recorded.
  */
-async function sumByMethod(
-  qb: SelectQueryBuilder<Order>,
-): Promise<{ cash: number; card: number; online: number; other: number; count: number }> {
+async function sumByMethod(qb: SelectQueryBuilder<Order>): Promise<MethodSums> {
   const bucket = (method: 'cash' | 'card' | 'online', column: string) =>
     `COALESCE(SUM(CASE
         WHEN "order"."paymentMethod" = 'partial' THEN "order"."${column}"
         WHEN "order"."paymentMethod" = '${method}' THEN "order"."total"
         ELSE 0 END), 0)`;
 
-  const row = await qb
-    .select(bucket('cash', 'paidCash'), 'cash')
+  const typeMatch = {
+    dine_in: `"order"."orderType" NOT IN ('takeaway', 'delivery')`,
+    takeaway: `"order"."orderType" = 'takeaway'`,
+    delivery: `"order"."orderType" = 'delivery'`,
+  };
+  const tipCell = (orderType: keyof typeof typeMatch, method: string) =>
+    `COALESCE(SUM(CASE WHEN "order"."tipMethod" = '${method}' AND ${typeMatch[orderType]} THEN "order"."tipAmount" ELSE 0 END), 0)`;
+
+  qb.select(bucket('cash', 'paidCash'), 'cash')
     .addSelect(bucket('card', 'paidCard'), 'card')
     .addSelect(bucket('online', 'paidOnline'), 'online')
     .addSelect(
@@ -70,8 +127,22 @@ async function sumByMethod(
           ELSE "order"."total" END), 0)`,
       'other',
     )
-    .addSelect('COUNT("order"."id")', 'count')
-    .getRawOne<{ cash: string; card: string; online: string; other: string; count: string }>();
+    .addSelect('COUNT("order"."id")', 'count');
+
+  for (const orderType of TIP_ORDER_TYPES) {
+    for (const method of TIP_METHODS) {
+      qb.addSelect(tipCell(orderType, method), `tip_${orderType}_${method}`);
+    }
+  }
+
+  const row = await qb.getRawOne<Record<string, string>>();
+
+  const tips = new TipGrid();
+  for (const orderType of TIP_ORDER_TYPES) {
+    for (const method of TIP_METHODS) {
+      tips.add(orderType, method, row?.[`tip_${orderType}_${method}`]);
+    }
+  }
 
   // Postgres returns SUM as a string and COUNT as a bigint string; both
   // concatenate instead of adding unless coerced.
@@ -81,6 +152,54 @@ async function sumByMethod(
     online: round2(Number(row?.online) || 0),
     other: round2(Number(row?.other) || 0),
     count: Number(row?.count) || 0,
+    tips: tips.toCells(),
+  };
+}
+
+/** Sales plus tips, laid out with the drawer maths — the shape every client renders. */
+function buildTotals(input: {
+  openingFloat: number;
+  cashSales: number;
+  cardSales: number;
+  onlineSales: number;
+  otherSales: number;
+  totalSales: number;
+  orderCount: number;
+  cashPaidOut: number;
+  tips: TipCell[];
+  tipsFromDrawer: number;
+  /** A closed shift's frozen figure; live shifts leave it out and get it computed. */
+  frozenExpectedCash?: number;
+}): ShiftTotals {
+  const byMethod = tipsByMethod(input.tips);
+  const tips = tipTotal(input.tips);
+  const drawer = drawerMaths({
+    openingFloat: input.openingFloat,
+    cashSales: input.cashSales,
+    cashPaidOut: input.cashPaidOut,
+    cashTips: byMethod.cash,
+    tipsFromDrawer: input.tipsFromDrawer,
+  });
+
+  return {
+    cashSales: round2(input.cashSales),
+    cardSales: round2(input.cardSales),
+    onlineSales: round2(input.onlineSales),
+    otherSales: round2(input.otherSales),
+    totalSales: round2(input.totalSales),
+    orderCount: input.orderCount,
+    cashPaidOut: round2(input.cashPaidOut),
+    cashTips: byMethod.cash,
+    cardTips: byMethod.card,
+    onlineTips: byMethod.online,
+    tipTotal: tips,
+    tipsBreakdown: input.tips,
+    totalReceived: round2(input.totalSales + tips),
+    cashReceived: drawer.cashReceived,
+    cashInDrawer: drawer.cashInDrawer,
+    tipsFromDrawer: round2(input.tipsFromDrawer),
+    tipsOwed: drawer.tipsOwed,
+    expectedCash: input.frozenExpectedCash ?? drawer.expectedCash,
   };
 }
 
@@ -201,6 +320,31 @@ export class ShiftsService {
   }
 
   /**
+   * Everything settle() needs to know about the tenant, in one store read:
+   * whether an open shift is required (as `isEnforced`) and which payment
+   * methods tips are recorded for.
+   */
+  async settlementPolicy(storeId: string): Promise<{ enforceShift: boolean; tips: TipPolicy }> {
+    const store = await this.storesRepository.findOne({
+      where: { id: storeId },
+      select: {
+        id: true,
+        shiftsEnabled: true,
+        accountType: true,
+        tipsCashEnabled: true,
+        tipsCardEnabled: true,
+        tipsOnlineEnabled: true,
+      },
+    });
+    const restaurant = store?.accountType === 'restaurant';
+    return {
+      enforceShift: !!store?.shiftsEnabled && restaurant,
+      // Restaurant-only, like shifts: the general POS has no tip box.
+      tips: tipPolicyOf(restaurant ? store : null),
+    };
+  }
+
+  /**
    * The caller's open drawer, if any.
    *
    * `lock` takes FOR SHARE, which is what close() blocks on. A share lock (not
@@ -243,7 +387,7 @@ export class ShiftsService {
    */
   async computeTotals(
     manager: EntityManager,
-    shift: Pick<CashierShift, 'id' | 'openingFloat'>,
+    shift: Pick<CashierShift, 'id' | 'openingFloat' | 'storeId'>,
   ): Promise<ShiftTotals> {
     const sales = await sumByMethod(
       manager
@@ -251,12 +395,6 @@ export class ShiftsService {
         .where('order.shiftId = :shiftId', { shiftId: shift.id })
         .andWhere("order.status = 'paid'"),
     );
-
-    const cashSales = sales.cash;
-    const cardSales = sales.card;
-    const onlineSales = sales.online;
-    const otherSales = sales.other;
-    const orderCount = sales.count;
 
     const paidOutRow = await manager.query(
       `SELECT COALESCE(SUM("amount"), 0) AS sum
@@ -266,20 +404,35 @@ export class ShiftsService {
     );
     const cashPaidOut = Number(paidOutRow?.[0]?.sum) || 0;
 
-    const openingFloat = Number(shift.openingFloat) || 0;
+    // The store's setting only matters when there are card/online tips to
+    // place, so a shift without any — every shift on a store that does not
+    // record tips — costs no extra read. Deliberately NOT gated on the record
+    // switches: tips taken before the owner turned one off still count.
+    const tips = tipsByMethod(sales.tips);
+    let paidFromCash = false;
+    if (tips.card + tips.online > 0) {
+      const store = await manager.findOne(Store, {
+        where: { id: shift.storeId },
+        select: { id: true, tipsPaidFromCash: true },
+      });
+      paidFromCash = !!store?.tipsPaidFromCash;
+    }
 
-    return {
-      cashSales: round2(cashSales),
-      cardSales: round2(cardSales),
-      onlineSales: round2(onlineSales),
-      otherSales: round2(otherSales),
-      totalSales: round2(cashSales + cardSales + onlineSales + otherSales),
-      orderCount,
-      cashPaidOut: round2(cashPaidOut),
-      // The drawer should hold the float it started with, plus cash taken,
-      // minus cash spent out of it. Card and online never touch the drawer.
-      expectedCash: round2(openingFloat + cashSales - cashPaidOut),
-    };
+    // The drawer holds the float it started with, plus cash taken, minus cash
+    // spent out of it. Card and online never touch it; what tips do to the
+    // handover is `drawerMaths` in shift-rules.ts.
+    return buildTotals({
+      openingFloat: Number(shift.openingFloat) || 0,
+      cashSales: sales.cash,
+      cardSales: sales.card,
+      onlineSales: sales.online,
+      otherSales: sales.other,
+      totalSales: sales.cash + sales.card + sales.online + sales.other,
+      orderCount: sales.count,
+      cashPaidOut,
+      tips: sales.tips,
+      tipsFromDrawer: tipsDueFromDrawer(tips.card, tips.online, paidFromCash),
+    });
   }
 
   // ----------------------------------------------------------------- reads
@@ -422,6 +575,10 @@ export class ShiftsService {
         otherSales: 0,
         totalSales: 0,
         cashPaidOut: 0,
+        cashTips: 0,
+        cardTips: 0,
+        onlineTips: 0,
+        tipTotal: 0,
         expectedCash: 0,
         countedCash: 0,
         difference: 0,
@@ -443,6 +600,10 @@ export class ShiftsService {
       entry.otherSales += totals.otherSales;
       entry.totalSales += totals.totalSales;
       entry.cashPaidOut += totals.cashPaidOut;
+      entry.cashTips += totals.cashTips;
+      entry.cardTips += totals.cardTips;
+      entry.onlineTips += totals.onlineTips;
+      entry.tipTotal += totals.tipTotal;
       entry.expectedCash += totals.expectedCash;
       entry.countedCash += Number(shift.countedCash) || 0;
       entry.difference += Number(shift.difference) || 0;
@@ -465,6 +626,10 @@ export class ShiftsService {
         otherSales: round2(e.otherSales),
         totalSales: round2(e.totalSales),
         cashPaidOut: round2(e.cashPaidOut),
+        cashTips: round2(e.cashTips),
+        cardTips: round2(e.cardTips),
+        onlineTips: round2(e.onlineTips),
+        tipTotal: round2(e.tipTotal),
         expectedCash: round2(e.expectedCash),
         countedCash: round2(e.countedCash),
         difference: round2(e.difference),
@@ -512,8 +677,11 @@ export class ShiftsService {
         card: round2(range.card),
         online: round2(range.online),
         other: round2(range.other),
+        // Bills only. Tips are reported beside it, never inside it.
         total: round2(range.total),
         orderCount: range.orderCount,
+        tips: tipTotal(sales.tips),
+        tipsBreakdown: sales.tips,
       },
       currentShift: await this.current(storeId, userId),
       recentShifts: recent.map((s) => this.present(s)),
@@ -607,6 +775,13 @@ export class ShiftsService {
           totalSales: totals.totalSales,
           orderCount: totals.orderCount,
           cashPaidOut: totals.cashPaidOut,
+          cashTips: totals.cashTips,
+          cardTips: totals.cardTips,
+          onlineTips: totals.onlineTips,
+          // Frozen with the rest: the store's "tips taken from cash" setting
+          // as it stood at close decides this shift for good.
+          tipsFromDrawer: totals.tipsFromDrawer,
+          tipBreakdown: totals.tipsBreakdown,
           expectedCash: totals.expectedCash,
           countedCash,
           // Null counted cash (a force-close) means the variance is unknown,
@@ -684,7 +859,8 @@ export class ShiftsService {
 
   /** The frozen figures of a closed shift, in the same shape as live totals. */
   private snapshotTotals(shift: CashierShift): ShiftTotals {
-    return {
+    return buildTotals({
+      openingFloat: Number(shift.openingFloat) || 0,
       cashSales: Number(shift.cashSales) || 0,
       cardSales: Number(shift.cardSales) || 0,
       onlineSales: Number(shift.onlineSales) || 0,
@@ -692,8 +868,12 @@ export class ShiftsService {
       totalSales: Number(shift.totalSales) || 0,
       orderCount: Number(shift.orderCount) || 0,
       cashPaidOut: Number(shift.cashPaidOut) || 0,
-      expectedCash: Number(shift.expectedCash) || 0,
-    };
+      // Shifts closed before tips existed have no breakdown: no tips.
+      tips: tipCellsFrom(shift.tipBreakdown),
+      tipsFromDrawer: Number(shift.tipsFromDrawer) || 0,
+      // What was signed off, never a recomputation.
+      frozenExpectedCash: Number(shift.expectedCash) || 0,
+    });
   }
 
   /**
@@ -714,6 +894,10 @@ export class ShiftsService {
       otherSales: num(shift.otherSales),
       totalSales: num(shift.totalSales),
       cashPaidOut: num(shift.cashPaidOut),
+      cashTips: num(shift.cashTips),
+      cardTips: num(shift.cardTips),
+      onlineTips: num(shift.onlineTips),
+      tipsFromDrawer: num(shift.tipsFromDrawer),
       expectedCash: num(shift.expectedCash),
       countedCash: num(shift.countedCash),
       difference: num(shift.difference),

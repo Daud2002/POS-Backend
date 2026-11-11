@@ -582,12 +582,51 @@ does, and a supervisor may be granted it.
 **Reconciliation.** Only cash passes through the drawer:
 
 ```
-expectedCash = openingFloat + cashSales − cashPaidOut
+expectedCash = openingFloat + cashSales − cashPaidOut − tipsFromDrawer
 difference   = countedCash − expectedCash        (negative = short)
 ```
 
 `cashPaidOut` comes from cash expenses booked by that cashier while their shift
 was open. Card and online takings are reported but never handed over as notes.
+`tipsFromDrawer` is 0 unless the store pays card/online tips out of cash — see
+Tips below. `expectedCash` is the cash to hand over, with tips already out.
+
+### Tips
+
+A tip is money a customer leaves on top of the bill. It is stored beside the
+bill (`orders.tipAmount`, `orders.tipMethod`) and is **never** part of `total`,
+of `paidCash`/`paidCard`/`paidOnline`, or of any revenue figure.
+
+The owner switches recording on per payment method (`tipsCashEnabled`,
+`tipsCardEnabled`, `tipsOnlineEnabled` on the store, restaurant accounts
+only). With a method on, the till asks how much was received and sends the
+excess as `tipAmount`. A tip by a method that is switched off is refused
+(**400**); a payment without a tip is always accepted.
+
+`tipsPaidFromCash` decides what card and online tips do to the handover:
+
+```
+cashReceived   = cashSales + cashTips
+cashInDrawer   = openingFloat + cashReceived − cashPaidOut
+tipsFromDrawer = tipsPaidFromCash ? cardTips + onlineTips : 0
+expectedCash   = cashInDrawer − cashTips − tipsFromDrawer
+```
+
+Cash tips are kept out of the handover either way. Card/online tips that the
+drawer cannot cover never take `expectedCash` below zero; the remainder is
+reported as `tipsOwed`.
+
+Shift `totals` carry `cashTips`, `cardTips`, `onlineTips`, `tipTotal`,
+`totalReceived` (sales + tips), `cashReceived`, `cashInDrawer`,
+`tipsFromDrawer`, `tipsOwed`, and `tipsBreakdown`: tips by order type and
+method, `[{ orderType: 'dine_in' | 'takeaway' | 'delivery', method, amount }]`,
+non-zero cells only, dine-out counted as dine-in. They are frozen at close
+with the rest of the shift, so a later settings change does not alter a closed
+shift. The same `tipTotal` / `tipsBreakdown` appear on
+`GET /restaurant/reports/sales` (beside `revenue`, not in it), as
+`range.tips` / `range.tipsBreakdown` on `GET /shifts/me/dashboard`, and per
+cashier (`cashTips`, `cardTips`, `onlineTips`, `tipTotal`) on
+`GET /shifts/summary/by-cashier`.
 
 Settling a restaurant order returns **409** when the tenant has shifts enabled
 and the caller has no open drawer.
@@ -596,7 +635,7 @@ and the caller has no open drawer.
 
 | Method | Endpoint | Who | Notes |
 |---|---|---|---|
-| PATCH | `/stores/:id/settings` | owner | `{ name?, address?, phone?, email?, shiftsEnabled? }`. `shiftsEnabled: true` is rejected for non-restaurant accounts |
+| PATCH | `/stores/:id/settings` | owner | `{ name?, address?, phone?, email?, shiftsEnabled?, tipsCashEnabled?, tipsCardEnabled?, tipsOnlineEnabled?, tipsPaidFromCash? }`. Turning `shiftsEnabled` or any tip switch on is rejected for non-restaurant accounts |
 | POST | `/stores/:id/logo` | owner | `multipart/form-data`, field `logo`. PNG/JPEG/WebP, max 500 KB. **413** if larger, **400** if another type |
 | DELETE | `/stores/:id/logo` | owner | Removes the logo and clears `logoUrl` |
 | GET | `/stores/:id/logo` | public (no token) | The image bytes with their content type. **Empty** 404 when there is none — never JSON, so an `<img>` is not blocked by the browser (ORB) |
@@ -609,9 +648,10 @@ at the next release. Rows from before that move still carry
 `/uploads/logo/…`; those paths answer an empty 404 until the owner uploads
 again.
 
-`GET /auth/me` additionally returns `storeName`, `logoUrl` and `shiftsEnabled`,
-so clients do not have to fetch the store to render an identity or decide
-whether the till requires a shift.
+`GET /auth/me` additionally returns `storeName`, `logoUrl`, `shiftsEnabled` and
+the four tip switches, so clients do not have to fetch the store to render an
+identity, decide whether the till requires a shift, or know which payment
+methods ask for the amount received.
 
 ### Restaurant order lifecycle
 
@@ -655,7 +695,7 @@ to the customer first, the money is booked when it arrives:
 | Method | Endpoint | Who | Notes |
 |---|---|---|---|
 | POST | `/restaurant/orders/:id/print-bill` | cashier, owner | `{ discountType?, discountValue?, deliveryCharge? }`. Fixes the money, stamps `billPrintedById`/`billPrintedAt`, increments `billPrintCount`, and **claims** the order for the caller. Every field is *absent = keep what is stored, null = clear it*, so a bare `{}` is a plain reprint that never wipes a punch-time discount. `riderName` is accepted and ignored (legacy) |
-| POST | `/restaurant/orders/:id/settle` | cashier, owner | `{ paymentMethod?, split? }`. **409** until the bill is printed. Charges the printed figure (older clients may still send discount fields). Completes the order, frees the table, stamps the shift |
+| POST | `/restaurant/orders/:id/settle` | cashier, owner | `{ paymentMethod?, split?, tipAmount?, tipMethod?, expectedTotal? }`. **409** until the bill is printed, and when the order was already settled. Charges the printed figure (older clients may still send discount fields). `split` adds up to the bill alone; a tip is sent beside it and `tipMethod` (`cash`/`card`/`online`) defaults to a single-method payment's method, required on a split. `expectedTotal` is the bill the till showed: **409** if it is not the total being charged. Completes the order, frees the table, stamps the shift. `…/credit/settle` takes the same tip fields |
 
 **Billed as it is punched.** A cashier's takeaway or delivery is created with
 its money already on it: `POST /restaurant/orders` accepts `discountType`,

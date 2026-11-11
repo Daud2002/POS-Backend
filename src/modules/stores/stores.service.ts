@@ -169,6 +169,17 @@ export class StoresService {
       );
     }
 
+    // Same reasoning for tips: only the restaurant till has the
+    // amount-received box, so the switches mean nothing anywhere else.
+    const turnsTipsOn =
+      dto.tipsCashEnabled === true ||
+      dto.tipsCardEnabled === true ||
+      dto.tipsOnlineEnabled === true ||
+      dto.tipsPaidFromCash === true;
+    if (turnsTipsOn && store.accountType !== 'restaurant') {
+      throw new BadRequestException('Tips are only available on restaurant accounts');
+    }
+
     Object.assign(store, dto);
     return await this.storesRepository.save(store);
   }

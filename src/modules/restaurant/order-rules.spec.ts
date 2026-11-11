@@ -14,6 +14,7 @@ import {
   needsTable,
   resolveOrderType,
   resolvePayment,
+  resolveTip,
   shouldReleaseClaim,
   statusAfterRemoval,
   statusAfterRound,
@@ -391,5 +392,75 @@ describe('compareCreditOrders', () => {
     expect(isCreditOwing({ status: 'unpaid', creditedAt: at('2026-11-04T10:00:00Z') })).toBe(true);
     expect(isCreditOwing({ status: 'paid', creditedAt: at('2026-11-04T10:00:00Z') })).toBe(false);
     expect(isCreditOwing({ status: 'unpaid' })).toBe(false);
+  });
+});
+
+describe('resolveTip', () => {
+  const ALL = { cash: true, card: true, online: true };
+  const CARD_ONLY = { cash: false, card: true, online: false };
+  const NONE = { cash: false, card: false, online: false };
+  const paidBy = (paymentMethod: string) => ({ paymentMethod } as any);
+
+  it('records nothing when no tip is sent, whatever the switches say', () => {
+    expect(resolveTip(undefined, paidBy('cash'), 900, NONE)).toEqual({ tipAmount: 0, tipMethod: null });
+    expect(resolveTip({}, paidBy('cash'), 900, ALL)).toEqual({ tipAmount: 0, tipMethod: null });
+    expect(resolveTip({ tipAmount: 0 }, paidBy('card'), 900, NONE)).toEqual({ tipAmount: 0, tipMethod: null });
+    // A zero tip names no method even if the till sent one.
+    expect(resolveTip({ tipAmount: 0, tipMethod: 'cash' }, paidBy('cash'), 900, ALL)).toEqual({
+      tipAmount: 0,
+      tipMethod: null,
+    });
+  });
+
+  it('puts the tip on the method the bill was paid by', () => {
+    expect(resolveTip({ tipAmount: 150 }, paidBy('card'), 900, ALL)).toEqual({ tipAmount: 150, tipMethod: 'card' });
+    expect(resolveTip({ tipAmount: 99.999 }, paidBy('cash'), 900, ALL)).toEqual({ tipAmount: 100, tipMethod: 'cash' });
+  });
+
+  it('lets the tip arrive by a different method from the bill', () => {
+    // Bill on the card, a note left on the table.
+    expect(resolveTip({ tipAmount: 100, tipMethod: 'cash' }, paidBy('card'), 900, ALL)).toEqual({
+      tipAmount: 100,
+      tipMethod: 'cash',
+    });
+  });
+
+  it('must be told the method on a split or a cheque', () => {
+    expect(() => resolveTip({ tipAmount: 100 }, paidBy('partial'), 900, ALL)).toThrow(BadRequestException);
+    expect(() => resolveTip({ tipAmount: 100 }, paidBy('check'), 900, ALL)).toThrow(/cash, card or online/);
+    expect(resolveTip({ tipAmount: 100, tipMethod: 'online' }, paidBy('partial'), 900, ALL)).toEqual({
+      tipAmount: 100,
+      tipMethod: 'online',
+    });
+  });
+
+  it('refuses a tip by a method the owner has not switched on', () => {
+    expect(() => resolveTip({ tipAmount: 100 }, paidBy('cash'), 900, CARD_ONLY)).toThrow(BadRequestException);
+    expect(() => resolveTip({ tipAmount: 100 }, paidBy('cash'), 900, CARD_ONLY)).toThrow(/Tips by cash/);
+    expect(() => resolveTip({ tipAmount: 100, tipMethod: 'online' }, paidBy('card'), 900, CARD_ONLY)).toThrow(
+      /Tips by online/,
+    );
+    expect(resolveTip({ tipAmount: 100 }, paidBy('card'), 900, CARD_ONLY).tipMethod).toBe('card');
+    expect(() => resolveTip({ tipAmount: 100 }, paidBy('card'), 900, NONE)).toThrow(BadRequestException);
+  });
+
+  it('rejects an amount that is not a sensible number', () => {
+    expect(() => resolveTip({ tipAmount: -5 }, paidBy('cash'), 900, ALL)).toThrow(BadRequestException);
+    expect(() => resolveTip({ tipAmount: 'abc' }, paidBy('cash'), 900, ALL)).toThrow(BadRequestException);
+    expect(() => resolveTip({ tipAmount: 50, tipMethod: 'check' }, paidBy('cash'), 900, ALL)).toThrow(
+      BadRequestException,
+    );
+  });
+
+  it('refuses the payment when the till was looking at a different bill', () => {
+    // Another till reprinted with a discount: the 100 "tip" would be change.
+    expect(() => resolveTip({ tipAmount: 100, expectedTotal: 1000 }, paidBy('cash'), 900, ALL)).toThrow(
+      ConflictException,
+    );
+    // Refused even with no tip typed: what was received was judged against the wrong bill.
+    expect(() => resolveTip({ expectedTotal: 1000 }, paidBy('cash'), 900, ALL)).toThrow(/now 900\.00/);
+    expect(resolveTip({ tipAmount: 100, expectedTotal: 900 }, paidBy('cash'), 900, ALL).tipAmount).toBe(100);
+    // An older till sends no expectedTotal and is not checked.
+    expect(resolveTip({ tipAmount: 100 }, paidBy('cash'), 900, ALL).tipAmount).toBe(100);
   });
 });

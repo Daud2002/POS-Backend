@@ -125,7 +125,39 @@ export class CashierShift {
   @Column({ type: 'decimal', precision: 12, scale: 2, nullable: true })
   cashPaidOut?: number | null;
 
-  /** openingFloat + cashSales − cashPaidOut. */
+  /**
+   * Tips recorded on this shift's payments, by the method they arrived by.
+   * Never part of the sales figures above — those are bills only.
+   */
+  @Column({ type: 'decimal', precision: 12, scale: 2, nullable: true })
+  cashTips?: number | null;
+
+  @Column({ type: 'decimal', precision: 12, scale: 2, nullable: true })
+  cardTips?: number | null;
+
+  @Column({ type: 'decimal', precision: 12, scale: 2, nullable: true })
+  onlineTips?: number | null;
+
+  /**
+   * Card/online tips due to staff out of THIS drawer: cardTips + onlineTips
+   * when the store's `tipsPaidFromCash` was on at close, else 0. Frozen here
+   * so flipping the setting later cannot rewrite a shift already handed over.
+   */
+  @Column({ type: 'decimal', precision: 12, scale: 2, nullable: true })
+  tipsFromDrawer?: number | null;
+
+  /**
+   * The same tips by order type and method — what the "Tips" dropdown lists.
+   * Only the non-zero cells, so at most nine entries.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  tipBreakdown?: Array<{ orderType: string; method: string; amount: number }> | null;
+
+  /**
+   * The cash to hand over: openingFloat + cashSales − cashPaidOut −
+   * tipsFromDrawer, never below zero on account of tips. Cash tips are not in
+   * `cashSales`, so they are already out of this figure.
+   */
   @Column({ type: 'decimal', precision: 12, scale: 2, nullable: true })
   expectedCash?: number | null;
 

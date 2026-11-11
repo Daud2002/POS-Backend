@@ -49,8 +49,7 @@ Name: "{autoprograms}\TapNtrade Server setup"; Filename: "http://localhost/setup
 Name: "{autodesktop}\TapNtrade"; Filename: "https://localhost"
 
 [Run]
-Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Visual C++ runtime..."; Flags: waituntilterminated
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\setup.ps1"" -InstallDir ""{app}"" {code:PrivateNetFlag}"; StatusMsg: "Setting up the database and server (this takes a minute)..."; Flags: waituntilterminated runhidden
+Filename: "http://localhost/setup"; Description: "Open the TapNtrade Server setup page"; Flags: postinstall shellexec nowait
 
 [UninstallRun]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\uninstall.ps1"" -InstallDir ""{app}"""; Flags: waituntilterminated runhidden; RunOnceId: "TapNtradeUninstall"
@@ -59,6 +58,29 @@ Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Fil
 function PrivateNetFlag(Param: String): String;
 begin
   if WizardIsTaskSelected('privatenet') then Result := '-MakeNetworkPrivate' else Result := '';
+end;
+
+{ The runtime, then setup.ps1, run here rather than in [Run] so a failed
+  setup is reported instead of the wizard saying it finished. setup.ps1
+  exits non-zero on any failure and logs every step to setup.log. }
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Code: Integer;
+  Args: String;
+begin
+  if CurStep <> ssPostInstall then Exit;
+
+  WizardForm.StatusLabel.Caption := 'Installing Visual C++ runtime...';
+  { 0 = installed, 1638 = a newer one is already there, 3010 = needs a restart: all fine. }
+  Exec(ExpandConstant('{tmp}\vc_redist.x64.exe'), '/install /quiet /norestart', '', SW_HIDE, ewWaitUntilTerminated, Code);
+
+  WizardForm.StatusLabel.Caption := 'Setting up the database and server (this takes a minute)...';
+  Args := '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\scripts\setup.ps1') +
+    '" -InstallDir "' + ExpandConstant('{app}') + '" ' + PrivateNetFlag('');
+  if (not Exec('powershell.exe', Args, '', SW_HIDE, ewWaitUntilTerminated, Code)) or (Code <> 0) then
+    MsgBox('TapNtrade Server was copied to this PC, but its setup did not finish (code ' + IntToStr(Code) + ').' + #13#10#13#10 +
+      'The details are in C:\ProgramData\TapNtrade\logs\setup.log.' + #13#10 +
+      'Send that file to TapNtrade support.', mbError, MB_OK);
 end;
 
 { Stop the running server before its files are replaced on an upgrade. }

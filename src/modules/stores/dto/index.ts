@@ -128,6 +128,34 @@ export class UpdateStoreSettingsDto {
   @IsOptional()
   @IsBoolean()
   shiftsEnabled?: boolean;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'Record tips on cash payments: the till asks how much was received and stores the excess as a tip, never as revenue. Restaurant accounts only.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  tipsCashEnabled?: boolean;
+
+  @ApiProperty({ required: false, description: 'Record tips on card payments. Restaurant accounts only.' })
+  @IsOptional()
+  @IsBoolean()
+  tipsCardEnabled?: boolean;
+
+  @ApiProperty({ required: false, description: 'Record tips on online payments. Restaurant accounts only.' })
+  @IsOptional()
+  @IsBoolean()
+  tipsOnlineEnabled?: boolean;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'Card and online tips are paid to staff out of the cash drawer, so they come off the cash a cashier hands over. Restaurant accounts only.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  tipsPaidFromCash?: boolean;
 }
 
 export class UpdateStoreDto {

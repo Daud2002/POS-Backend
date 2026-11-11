@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException } from '@nestjs/common';
 import type { OrderType, RestaurantOrderStatus } from '../../entities';
 import { kitchenLines } from '../../common/kitchen-routing';
 import { resolveDiscount, round2, type DiscountType } from '../../common/discount';
+import { TIP_METHODS, type TipMethod, type TipPolicy } from '../../common/tips';
 
 /**
  * Pure decisions of the restaurant order flow, kept out of the service so
@@ -430,6 +431,80 @@ export function resolvePayment(
   }
 
   return { paymentMethod: 'partial', paidCash: cash, paidCard: card, paidOnline: online };
+}
+
+// --------------------------------------------------------------------- tips
+
+export interface TipInput {
+  tipAmount?: number | string | null;
+  tipMethod?: string | null;
+  /** The bill the cashier was looking at when they typed what they received. */
+  expectedTotal?: number | string | null;
+}
+
+/** What gets written on the order. Zero and null when no tip was left. */
+export interface ResolvedTip {
+  tipAmount: number;
+  tipMethod: TipMethod | null;
+}
+
+/**
+ * Turns what the till sent into the tip stored on the order.
+ *
+ * The tip is NOT derived here from "amount received minus the bill". The till
+ * does that subtraction and sends the tip explicitly, alongside the bill it
+ * subtracted from (`expectedTotal`). If that bill is not the one the server is
+ * about to charge — another till reprinted with a discount, a round was added
+ * — the payment is refused. Deriving it here instead would turn any stale
+ * total into a tip nobody left, or swallow one that was.
+ *
+ * A tip rides on exactly one method. A single cash, card or online payment
+ * implies it; a split or a cheque must say, because the shift handover treats
+ * cash tips and card/online tips differently. The method must be one the
+ * owner switched on. "No tip" always passes, switches or not, so a store that
+ * never turned tips on is untouched by any of this.
+ */
+export function resolveTip(
+  input: TipInput | null | undefined,
+  payment: Pick<ResolvedPayment, 'paymentMethod'>,
+  total: number,
+  policy: TipPolicy,
+): ResolvedTip {
+  const due = round2(Number(total) || 0);
+
+  const expected = input?.expectedTotal;
+  if (expected !== null && expected !== undefined && expected !== '') {
+    const seen = Number(expected);
+    if (!Number.isFinite(seen) || Math.abs(round2(seen) - due) > 0.009) {
+      throw new ConflictException(
+        `This bill is now ${due.toFixed(2)}. Reopen the order and take the payment again.`,
+      );
+    }
+  }
+
+  const raw = input?.tipAmount;
+  if (raw === null || raw === undefined || raw === '') return { tipAmount: 0, tipMethod: null };
+
+  const amount = Number(raw);
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new BadRequestException('The tip must be a number of zero or more');
+  }
+  const tipAmount = round2(amount);
+  if (tipAmount === 0) return { tipAmount: 0, tipMethod: null };
+
+  const implied = TIP_METHODS.find((m) => m === payment.paymentMethod);
+  const tipMethod = (input?.tipMethod ?? implied) as TipMethod | undefined;
+  if (!tipMethod || !TIP_METHODS.includes(tipMethod)) {
+    throw new BadRequestException('Say whether the tip came by cash, card or online');
+  }
+
+  if (!policy[tipMethod]) {
+    throw new BadRequestException(
+      `Tips by ${tipMethod} are not being recorded for this store. Clear the tip and take the payment again.`,
+    );
+  }
+
+  return { tipAmount, tipMethod };
 }
 
 // ------------------------------------------------------------ credit sales

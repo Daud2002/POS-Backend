@@ -145,6 +145,17 @@ describe('describeRequest', () => {
     expect(settled?.action).toBe('order.settled');
     expect(settled?.summary).toBe('Order #3 settled (card, total 900.00)');
 
+    // The tip is named beside the total, never folded into it.
+    const tipped = describeRequest(
+      ctx({
+        routePath: '/api/restaurant/orders/:id/settle',
+        params: { id: 'o' },
+        body: { paymentMethod: 'card', tipAmount: 150 },
+        response: { orderSequence: 4, total: 900, paymentMethod: 'card', tipAmount: '150.00', tipMethod: 'card' },
+      }),
+    );
+    expect(tipped?.summary).toBe('Order #4 settled (card, total 900.00, tip 150.00 by card)');
+
     const cancelled = describeRequest(
       ctx({ routePath: '/api/restaurant/orders/:id/cancel', params: { id: 'o' }, response: { orderSequence: 3 } }),
     );

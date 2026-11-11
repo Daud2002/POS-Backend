@@ -394,6 +394,25 @@ export class Order {
   paidOnline: number;
 
   /**
+   * The TIP left on top of the bill, and the method it arrived by.
+   *
+   * Deliberately OUTSIDE `total` and the `paid*` columns: those are the bill,
+   * and every revenue figure sums `total`. Keeping the tip in its own column
+   * is what guarantees revenue can never include it — no report has to
+   * remember to subtract anything. 0 / NULL when no tip was recorded, which
+   * is every order on a store with tip recording off.
+   *
+   * One tip, one method. On a split payment the cashier says which part the
+   * tip came by, because the shift handover treats cash tips and card/online
+   * tips differently (see `drawerMaths` in shifts/shift-rules.ts).
+   */
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  tipAmount: number;
+
+  @Column({ type: 'varchar', length: 10, nullable: true })
+  tipMethod?: 'cash' | 'card' | 'online' | null;
+
+  /**
    * Optimistic lock. Drafts are shared across waiters, so two people can open
    * the same one; a stale write bumps into this and gets a 409 instead of
    * silently clobbering the other waiter's lines.
